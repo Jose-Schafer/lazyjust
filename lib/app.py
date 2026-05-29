@@ -8,7 +8,7 @@ from pathlib import Path
 from lib.justfile import Recipe, current_level_dir, list_recipes, run_recipe
 
 
-PAIR_HEADER = 1
+PAIR_NAMESPACE = 1
 PAIR_BORDER = 2
 PAIR_SELECTED = 3
 PAIR_DIM = 4
@@ -18,6 +18,8 @@ PAIR_ERROR = 7
 PAIR_MODAL = 8
 PAIR_MODAL_SELECTED = 9
 PAIR_FOOTER_KEY = 10
+PAIR_LOCATION = 11
+PAIR_LOCATION_ACTIVE = 12
 
 
 @dataclass(frozen=True)
@@ -218,27 +220,28 @@ def _draw(stdscr: curses.window, state: AppState) -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
 
-    if height < 10 or width < 50:
+    if height < 11 or width < 50:
         _draw_too_small(stdscr, height, width)
         stdscr.refresh()
         return
 
-    header = Rect(y=0, x=0, height=1, width=width)
-    body_height = height - 2
+    location = Rect(y=0, x=0, height=2, width=width)
+    body_y = 2
+    body_height = height - body_y - 1
     left_width = max(32, min(48, width // 3))
-    left = Rect(y=1, x=0, height=body_height, width=left_width)
+    left = Rect(y=body_y, x=0, height=body_height, width=left_width)
     right_width = width - left_width
     details_height = max(9, min(12, body_height // 2))
-    details = Rect(y=1, x=left_width, height=details_height, width=right_width)
+    details = Rect(y=body_y, x=left_width, height=details_height, width=right_width)
     output = Rect(
-        y=1 + details_height,
+        y=body_y + details_height,
         x=left_width,
         height=body_height - details_height,
         width=right_width,
     )
     footer = Rect(y=height - 1, x=0, height=1, width=width)
 
-    _draw_header(stdscr, state, header)
+    _draw_location(stdscr, state, location)
     _draw_recipes(stdscr, state, left)
     _draw_details(stdscr, state, details)
     _draw_lower_pane(stdscr, state, output)
@@ -248,25 +251,46 @@ def _draw(stdscr: curses.window, state: AppState) -> None:
     stdscr.refresh()
 
 
-def _draw_header(stdscr: curses.window, state: AppState, rect: Rect) -> None:
-    crumb = " / ".join(["root", *state.path])
-    selected = _selected_recipe(state)
-    command = f"just {' '.join([*state.path, selected.name])}" if selected else "no command"
-    title = f" lazypro | {crumb} | {command} "
-    _safe_addstr(stdscr, rect.y, rect.x, title[: rect.width].ljust(rect.width), _color(PAIR_HEADER))
+def _draw_location(stdscr: curses.window, state: AppState, rect: Rect) -> None:
+    if rect.height < 2:
+        return
+
+    level_dir, _ = current_level_dir(state.cwd, state.path)
+    _safe_addstr(stdscr, rect.y, rect.x, " " * rect.width, _color(PAIR_LOCATION))
+    _safe_addstr(stdscr, rect.y + 1, rect.x, " " * rect.width, _color(PAIR_LOCATION))
+
+    x = rect.x + 1
+    label = " YOU ARE HERE "
+    _safe_addstr(stdscr, rect.y, x, label, _color(PAIR_LOCATION_ACTIVE))
+    x += len(label) + 1
+
+    parts = ["root", *state.path]
+    for index, part in enumerate(parts):
+        is_active = index == len(parts) - 1
+        attr = _color(PAIR_LOCATION_ACTIVE) if is_active else _color(PAIR_LOCATION)
+        text = f" {part} "
+        if x + len(text) >= rect.width:
+            break
+        _safe_addstr(stdscr, rect.y, x, text, attr)
+        x += len(text)
+        if index < len(parts) - 1 and x + 3 < rect.width:
+            _safe_addstr(stdscr, rect.y, x, " > ", _color(PAIR_LOCATION))
+            x += 3
+
+    directory = f" DIR {level_dir} "
+    _safe_addstr(stdscr, rect.y + 1, rect.x + 1, directory[: max(0, rect.width - 2)], _color(PAIR_LOCATION))
 
 
 def _draw_recipes(stdscr: curses.window, state: AppState, rect: Rect) -> None:
-    _draw_box(stdscr, rect, "Commands")
+    _draw_box(stdscr, rect, f"Commands: {_current_level_name(state)}")
     content = _inner(rect)
     list_height = max(0, content.height)
     start = _visible_start(state.selected, list_height, len(state.recipes))
 
     for row, recipe in enumerate(state.recipes[start : start + list_height], start=content.y):
         recipe_index = start + row - content.y
-        marker = ">" if recipe.is_namespace else " "
-        label = f" {marker} {recipe.name}"
-        attr = _color(PAIR_SELECTED) if recipe_index == state.selected else curses.A_NORMAL
+        label = _recipe_label(recipe)
+        attr = _recipe_attr(recipe, recipe_index == state.selected)
         _safe_addstr(
             stdscr,
             row,
@@ -362,9 +386,7 @@ def _draw_footer(stdscr: curses.window, state: AppState, rect: Rect) -> None:
         ("q", "quit"),
     ]
 
-    message = state.message or str(state.cwd)
-    if state.path:
-        message = f"{message} | {' / '.join(state.path)}"
+    message = state.message or _selected_command(state)
 
     attr = _color(PAIR_ERROR) if state.message and state.message.startswith("exit ") else _color(PAIR_FOOTER)
     _safe_addstr(stdscr, rect.y, rect.x, " " * max(0, rect.width - 1), attr)
@@ -524,6 +546,33 @@ def _selected_recipe(state: AppState) -> Recipe | None:
     return state.recipes[state.selected]
 
 
+def _recipe_label(recipe: Recipe) -> str:
+    if recipe.is_namespace:
+        return f" > {recipe.name}/"
+    return f"   {recipe.name}"
+
+
+def _recipe_attr(recipe: Recipe, selected: bool) -> int:
+    if selected:
+        return _color(PAIR_SELECTED) | (curses.A_BOLD if recipe.is_namespace else curses.A_NORMAL)
+    if recipe.is_namespace:
+        return _color(PAIR_NAMESPACE) | curses.A_BOLD
+    return curses.A_NORMAL
+
+
+def _current_level_name(state: AppState) -> str:
+    if state.path:
+        return state.path[-1]
+    return "root"
+
+
+def _selected_command(state: AppState) -> str:
+    recipe = _selected_recipe(state)
+    if recipe is None:
+        return "no command selected"
+    return f"just {' '.join([*state.path, recipe.name])}"
+
+
 def _visible_start(selected: int, visible_count: int, total_count: int) -> int:
     if visible_count <= 0 or total_count <= visible_count:
         return 0
@@ -532,7 +581,7 @@ def _visible_start(selected: int, visible_count: int, total_count: int) -> int:
 
 
 def _draw_too_small(stdscr: curses.window, height: int, width: int) -> None:
-    message = "lazypro needs at least 50x10"
+    message = "lazypro needs at least 50x11"
     y = max(0, height // 2)
     x = max(0, (width - len(message)) // 2)
     _safe_addstr(stdscr, y, x, message[:width], curses.A_REVERSE)
@@ -548,7 +597,7 @@ def _init_colors() -> None:
     if not curses.has_colors():
         return
 
-    curses.init_pair(PAIR_HEADER, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    curses.init_pair(PAIR_NAMESPACE, curses.COLOR_CYAN, -1)
     curses.init_pair(PAIR_BORDER, curses.COLOR_CYAN, -1)
     curses.init_pair(PAIR_SELECTED, curses.COLOR_BLACK, curses.COLOR_YELLOW)
     curses.init_pair(PAIR_DIM, curses.COLOR_BLUE, -1)
@@ -558,13 +607,21 @@ def _init_colors() -> None:
     curses.init_pair(PAIR_MODAL, curses.COLOR_WHITE, -1)
     curses.init_pair(PAIR_MODAL_SELECTED, curses.COLOR_BLACK, curses.COLOR_YELLOW)
     curses.init_pair(PAIR_FOOTER_KEY, curses.COLOR_YELLOW, curses.COLOR_BLUE)
+    curses.init_pair(PAIR_LOCATION, curses.COLOR_WHITE, -1)
+    curses.init_pair(PAIR_LOCATION_ACTIVE, curses.COLOR_BLACK, curses.COLOR_YELLOW)
 
 
 def _color(pair: int) -> int:
     if not curses.has_colors():
         return (
             curses.A_REVERSE
-            if pair in {PAIR_HEADER, PAIR_SELECTED, PAIR_FOOTER, PAIR_MODAL_SELECTED}
+            if pair
+            in {
+                PAIR_SELECTED,
+                PAIR_FOOTER,
+                PAIR_MODAL_SELECTED,
+                PAIR_LOCATION_ACTIVE,
+            }
             else curses.A_NORMAL
         )
     return curses.color_pair(pair)
