@@ -1,0 +1,10 @@
+services:
+  lazypro:
+    build: .
+    working_dir: /workspace
+    volumes:
+      - .:/app
+      - ..:/workspace
+    command: uv run --project /app python /app/main.py
+    tty: true
+    stdin_open: true

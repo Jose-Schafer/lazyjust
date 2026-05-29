@@ -1,0 +1,21 @@
+[project]
+name = "lazypro"
+version = "0.1.0"
+description = "Lazy-style TUI for navigating monorepo justfiles."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2.0",
+    "ruff>=0.6.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
