@@ -22,3 +22,7 @@ fmt:
 # Run tests
 test:
     uv run pytest
+
+# Reinstall
+reinstall:
+    uv tool install --reinstall /Users/joseschafer/Documents/lazypro

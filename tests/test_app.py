@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from lib.app import AppState, _help_options
+from lib.app import AppState, _help_options, _toggle_lower_view
 from lib.justfile import Recipe
 
 
@@ -46,3 +46,13 @@ def test_help_options_show_run_hint_for_command() -> None:
     assert options[0].key == "enter / l"
     assert options[0].description == "run just projects test"
     assert options[0].action == "activate"
+
+
+def test_toggle_lower_view_switches_between_log_and_env() -> None:
+    state = AppState(cwd=Path("/repo"))
+
+    _toggle_lower_view(state)
+    assert state.lower_view == "env"
+
+    _toggle_lower_view(state)
+    assert state.lower_view == "log"

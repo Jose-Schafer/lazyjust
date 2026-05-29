@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
+from shlex import split
 
 
 @dataclass(frozen=True)
@@ -12,14 +13,16 @@ class Recipe:
     description: str
     is_variadic: bool
     is_namespace: bool
+    working_dir: Path | None = None
 
 
 def list_recipes(cwd: Path, path: list[str] | None = None) -> list[Recipe]:
     just_path = path or []
-    command = ["just", *just_path, "--list"]
+    level_dir, resolved = current_level_dir(cwd, just_path)
+    command = ["just", "--list"] if resolved else ["just", *just_path, "--list"]
     result = subprocess.run(
         command,
-        cwd=cwd,
+        cwd=level_dir if resolved else cwd,
         check=False,
         text=True,
         capture_output=True,
@@ -28,7 +31,8 @@ def list_recipes(cwd: Path, path: list[str] | None = None) -> list[Recipe]:
         raise RuntimeError((result.stderr or result.stdout).strip())
 
     recipes = parse_just_list(result.stdout)
-    return [_with_namespace_status(cwd, just_path, recipe) for recipe in recipes]
+    delegations = parse_working_directories(level_dir)
+    return [_with_namespace_status(cwd, just_path, level_dir, delegations, recipe) for recipe in recipes]
 
 
 def run_recipe(cwd: Path, path: list[str]) -> int:
@@ -84,17 +88,109 @@ def _is_recipe_name(value: str) -> bool:
     return all(char.isalnum() or char in "_-" for char in value)
 
 
-def _with_namespace_status(cwd: Path, current_path: list[str], recipe: Recipe) -> Recipe:
+def current_level_dir(cwd: Path, path: list[str]) -> tuple[Path, bool]:
+    level_dir = cwd
+    for part in path:
+        delegations = parse_working_directories(level_dir)
+        next_dir = delegations.get(part)
+        if next_dir is None:
+            guessed_dir = level_dir / part
+            if _has_justfile(guessed_dir):
+                level_dir = guessed_dir
+                continue
+            return level_dir, False
+        level_dir = next_dir
+    return level_dir, True
+
+
+def parse_working_directories(justfile_dir: Path) -> dict[str, Path]:
+    justfile_path = _find_justfile(justfile_dir)
+    if justfile_path is None:
+        return {}
+
+    pending_working_dir: Path | None = None
+    delegations: dict[str, Path] = {}
+    try:
+        justfile_text = justfile_path.read_text()
+    except OSError:
+        return {}
+
+    for raw_line in justfile_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if line.startswith("[") and line.endswith("]"):
+            working_dir = _parse_working_directory(line, justfile_dir)
+            if working_dir is not None:
+                pending_working_dir = working_dir
+            continue
+
+        if line.endswith(":"):
+            name = _parse_recipe_header(line)
+            if name and pending_working_dir is not None:
+                delegations[name] = pending_working_dir
+            pending_working_dir = None
+
+    return delegations
+
+
+def _with_namespace_status(
+    _cwd: Path,
+    _current_path: list[str],
+    level_dir: Path,
+    delegations: dict[str, Path],
+    recipe: Recipe,
+) -> Recipe:
     if not recipe.is_variadic:
         return recipe
 
-    next_path = [*current_path, recipe.name]
-    result = subprocess.run(
-        ["just", *next_path, "--list"],
-        cwd=cwd,
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-    is_namespace = result.returncode == 0 and "Available recipes:" in result.stdout
-    return replace(recipe, is_namespace=is_namespace)
+    working_dir = delegations.get(recipe.name)
+    if working_dir is not None:
+        return replace(recipe, is_namespace=_has_justfile(working_dir), working_dir=working_dir)
+
+    guessed_dir = level_dir / recipe.name
+    if _has_justfile(guessed_dir):
+        return replace(recipe, is_namespace=True, working_dir=guessed_dir)
+
+    return replace(recipe, is_namespace=False)
+
+
+def _parse_working_directory(attribute: str, justfile_dir: Path) -> Path | None:
+    if "working-directory" not in attribute:
+        return None
+
+    if "(" in attribute and ")" in attribute:
+        value = attribute.split("(", maxsplit=1)[1].rsplit(")", maxsplit=1)[0]
+    elif ":" in attribute:
+        value = attribute.split(":", maxsplit=1)[1].rstrip("]")
+    else:
+        return None
+
+    try:
+        parts = split(value.strip())
+    except ValueError:
+        return None
+    if not parts:
+        return None
+    return (justfile_dir / parts[0]).resolve()
+
+
+def _parse_recipe_header(line: str) -> str | None:
+    header = line.removesuffix(":").strip()
+    if not header:
+        return None
+    first = header.split()[0].removeprefix("@")
+    return first if _is_recipe_name(first) else None
+
+
+def _find_justfile(directory: Path) -> Path | None:
+    for name in ("justfile", "Justfile", ".justfile"):
+        path = directory / name
+        if path.is_file():
+            return path
+    return None
+
+
+def _has_justfile(directory: Path) -> bool:
+    return _find_justfile(directory) is not None

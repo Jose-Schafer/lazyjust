@@ -43,6 +43,7 @@ Controls:
 
 - `j` / `k` or arrow keys: navigate
 - `enter` / `l`: open a variadic delegation recipe or run a recipe
+- `tab` / `e`: switch the lower pane between logs and the current level `.env`
 - `?`: show context-aware keybinding hints
 - `h` / `backspace`: go up
 - `r`: reload

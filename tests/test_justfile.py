@@ -1,4 +1,4 @@
-from lib.justfile import list_recipes, parse_just_list
+from lib.justfile import current_level_dir, list_recipes, parse_just_list, parse_working_directories
 
 
 def test_parse_just_list_marks_variadic_recipes_as_namespaces() -> None:
@@ -66,3 +66,49 @@ projects *args:
     assert recipes["uv"].is_namespace is False
     assert recipes["projects"].is_variadic is True
     assert recipes["projects"].is_namespace is True
+
+
+def test_parse_working_directories_supports_common_just_attribute_forms(tmp_path) -> None:
+    (tmp_path / "projects").mkdir()
+    (tmp_path / "lab").mkdir()
+    (tmp_path / "justfile").write_text(
+        """
+[working-directory('projects')]
+@projects *args:
+    just "$@"
+
+[private]
+[working-directory: 'lab']
+@lab *args:
+    just {{ args }}
+""".strip()
+    )
+
+    delegations = parse_working_directories(tmp_path)
+
+    assert delegations["projects"] == (tmp_path / "projects").resolve()
+    assert delegations["lab"] == (tmp_path / "lab").resolve()
+
+
+def test_current_level_dir_resolves_nested_working_directory_delegations(tmp_path) -> None:
+    (tmp_path / "projects" / "project_1").mkdir(parents=True)
+    (tmp_path / "justfile").write_text(
+        """
+[working-directory('projects')]
+@projects *args:
+    just "$@"
+""".strip()
+    )
+    (tmp_path / "projects" / "justfile").write_text(
+        """
+[working-directory('project_1')]
+@project_1 *args:
+    just "$@"
+""".strip()
+    )
+    (tmp_path / "projects" / "project_1" / "justfile").write_text("run:\n    echo run\n")
+
+    level_dir, resolved = current_level_dir(tmp_path, ["projects", "project_1"])
+
+    assert resolved is True
+    assert level_dir == (tmp_path / "projects" / "project_1").resolve()

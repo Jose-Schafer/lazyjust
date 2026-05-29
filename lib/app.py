@@ -5,7 +5,7 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from lib.justfile import Recipe, list_recipes, run_recipe
+from lib.justfile import Recipe, current_level_dir, list_recipes, run_recipe
 
 
 PAIR_HEADER = 1
@@ -37,6 +37,7 @@ class AppState:
     output: str = ""
     show_help: bool = False
     help_selected: int = 0
+    lower_view: str = "log"
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,9 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
                 state.path.pop()
                 _reload(state)
             continue
+        if key in (9, ord("e")):
+            _toggle_lower_view(state)
+            continue
         if key in (ord("r"),):
             _reload(state)
             continue
@@ -115,6 +119,7 @@ def _handle_help_key(state: AppState, key: int) -> bool:
         "h": "back",
         "q": "quit",
         "r": "reload",
+        "e": "toggle_env",
     }
     if 0 <= key < 256 and (action := action_by_key.get(chr(key))):
         return _run_help_action(state, action)
@@ -136,6 +141,9 @@ def _run_help_action(state: AppState, action: str) -> bool:
         return False
     if action == "reload":
         _reload(state)
+        return False
+    if action == "toggle_env":
+        _toggle_lower_view(state)
         return False
     if action == "back":
         if state.path:
@@ -159,6 +167,10 @@ def _reload(state: AppState) -> None:
         state.recipes = []
         state.selected = 0
         state.message = str(exc)
+
+
+def _toggle_lower_view(state: AppState) -> None:
+    state.lower_view = "env" if state.lower_view == "log" else "log"
 
 
 def _activate(state: AppState) -> None:
@@ -229,7 +241,7 @@ def _draw(stdscr: curses.window, state: AppState) -> None:
     _draw_header(stdscr, state, header)
     _draw_recipes(stdscr, state, left)
     _draw_details(stdscr, state, details)
-    _draw_output(stdscr, state, output)
+    _draw_lower_pane(stdscr, state, output)
     _draw_footer(stdscr, state, footer)
     if state.show_help:
         _draw_help_modal(stdscr, state, height, width)
@@ -287,12 +299,20 @@ def _draw_details(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     ]
     if recipe.description:
         lines.append(f"Description: {recipe.description}")
-    lines.append(f"Root: {state.cwd}")
+    level_dir, _ = current_level_dir(state.cwd, state.path)
+    lines.append(f"Directory: {level_dir}")
     _write_wrapped(stdscr, content, lines)
 
 
-def _draw_output(stdscr: curses.window, state: AppState, rect: Rect) -> None:
-    _draw_box(stdscr, rect, "Log")
+def _draw_lower_pane(stdscr: curses.window, state: AppState, rect: Rect) -> None:
+    if state.lower_view == "env":
+        _draw_env(stdscr, state, rect)
+        return
+    _draw_log(stdscr, state, rect)
+
+
+def _draw_log(stdscr: curses.window, state: AppState, rect: Rect) -> None:
+    _draw_box(stdscr, rect, "Log  [tab/e: .env]")
     content = _inner(rect)
     lines: list[str] = []
     if state.output:
@@ -309,11 +329,34 @@ def _draw_output(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     _write_wrapped(stdscr, content, lines, from_bottom=bool(state.output))
 
 
+def _draw_env(stdscr: curses.window, state: AppState, rect: Rect) -> None:
+    level_dir, resolved = current_level_dir(state.cwd, state.path)
+    env_path = level_dir / ".env"
+    title = ".env  [tab/e: log]"
+    _draw_box(stdscr, rect, title)
+    content = _inner(rect)
+
+    if not resolved:
+        _write_wrapped(stdscr, content, [f"Could not resolve current directory for: {' '.join(state.path)}"])
+        return
+    if not env_path.is_file():
+        _write_wrapped(stdscr, content, [f"No .env found at {env_path}"])
+        return
+
+    try:
+        lines = env_path.read_text().splitlines()
+    except OSError as exc:
+        lines = [f"Could not read {env_path}: {exc}"]
+
+    _write_wrapped(stdscr, content, lines or [f"{env_path} is empty"])
+
+
 def _draw_footer(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     segments = [
         ("j/k", "move"),
         ("enter", "open/run"),
         ("h", "back"),
+        ("tab/e", ".env"),
         ("?", "help"),
         ("r", "reload"),
         ("q", "quit"),
@@ -364,6 +407,7 @@ def _help_options(state: AppState) -> list[HelpOption]:
     options: list[HelpOption] = [
         HelpOption("j / down", "select next command", "select_down"),
         HelpOption("k / up", "select previous command", "select_up"),
+        HelpOption("tab / e", "toggle the lower pane between log and .env", "toggle_env"),
         HelpOption("r", "reload commands from the current justfile level", "reload"),
         HelpOption("h / backspace", "go back to the parent command group", "back"),
         HelpOption("q", "quit lazypro", "quit"),
