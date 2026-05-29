@@ -15,6 +15,30 @@ The interface follows a lazygit-style pane layout:
 just run
 ```
 
+Install it as a global uv tool:
+
+```bash
+uv tool install /Users/joseschafer/Documents/lazypro
+```
+
+Then run it from any project root:
+
+```bash
+lazypro
+```
+
+For one-off execution without installing:
+
+```bash
+uvx --from /Users/joseschafer/Documents/lazypro lazypro
+```
+
+After local changes, reinstall the global tool:
+
+```bash
+uv tool install --reinstall /Users/joseschafer/Documents/lazypro
+```
+
 Controls:
 
 - `j` / `k` or arrow keys: navigate
