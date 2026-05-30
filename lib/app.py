@@ -103,6 +103,7 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
     _set_fast_escape()
     curses.curs_set(0)
     stdscr.keypad(True)
+    stdscr.nodelay(False)
     _init_colors()
 
     state = AppState(cwd=cwd)
@@ -110,10 +111,18 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
 
     while True:
         _draw(stdscr, state)
-        key = stdscr.getch()
 
         if state.show_input:
-            _handle_input_key(state, key)
+            stdscr.nodelay(True)
+        else:
+            stdscr.nodelay(False)
+
+        key = stdscr.getch()
+        if key == -1:
+            continue
+
+        if state.show_input:
+            _handle_input_key(stdscr, state, key)
             continue
 
         if state.show_search:
@@ -234,7 +243,7 @@ def _run_help_action(state: AppState, action: str) -> bool:
     return False
 
 
-def _handle_input_key(state: AppState, key: int) -> None:
+def _handle_input_key(stdscr: curses.window, state: AppState, key: int) -> None:
     if key in (27,):
         _close_input(state)
         return
@@ -252,16 +261,37 @@ def _handle_input_key(state: AppState, key: int) -> None:
     if 32 <= key < 127:
         state.input_text += chr(key)
         state.input_error = ""
+        _drain_paste_buffer(stdscr, state)
+        return
+    if key == curses.KEY_RESIZE:
+        return
+
+
+def _drain_paste_buffer(stdscr: curses.window, state: AppState) -> None:
+    """Drain remaining pasted characters from input buffer."""
+    chars_read = 0
+    max_drain = 10000
+    while chars_read < max_drain:
+        ch = stdscr.getch()
+        if ch == -1:
+            break
+        chars_read += 1
+        if ch == 10:
+            state.input_text += "\n"
+        elif 32 <= ch < 127:
+            state.input_text += chr(ch)
 
 
 def _submit_input(state: AppState) -> None:
-    try:
-        args = split(state.input_text)
-    except ValueError as exc:
-        state.input_error = str(exc)
-        return
+    cleaned = _remove_backslashes(state.input_text) if "\\" in state.input_text else state.input_text
+    _process_and_run_input(state, cleaned)
 
+
+def _process_and_run_input(state: AppState, input_text: str) -> None:
     recipe = _recipe_for_path(state, state.pending_path)
+
+    args = [input_text]
+
     required_count = len([argument for argument in (recipe.arguments if recipe else ()) if argument.is_required])
     if len(args) < required_count:
         state.input_error = f"expected at least {required_count} argument(s), got {len(args)}"
@@ -278,6 +308,18 @@ def _close_input(state: AppState) -> None:
     state.input_error = ""
     state.pending_path = []
     state.pending_recipe = None
+
+
+def _remove_backslashes(text: str) -> str:
+    """Remove backslash line continuations and join into single line."""
+    lines = text.splitlines()
+    cleaned_lines = []
+    for line in lines:
+        if line.endswith("\\"):
+            cleaned_lines.append(line[:-1].rstrip())
+        else:
+            cleaned_lines.append(line.rstrip())
+    return " ".join(cleaned_lines)
 
 
 def _open_search(state: AppState) -> None:
@@ -426,6 +468,7 @@ def _activate(state: AppState) -> None:
         state.input_error = ""
         state.pending_path = next_path
         state.pending_recipe = recipe
+        state.message = "Tip: Paste multi-line? Will prompt to remove backslashes"
         return
 
     _run_command(state, next_path, [])
@@ -828,20 +871,22 @@ def _draw_input_modal(stdscr: curses.window, state: AppState, height: int, width
 
     row += 1
     if row < content.y + content.height:
+        display_text = state.input_text.replace("\n", "\\n")
         _safe_addstr(stdscr, row, content.x, "Args:", _color(PAIR_ARGUMENT) | curses.A_BOLD)
         input_x = content.x + 6
         input_width = max(0, content.width - 7)
         _safe_addstr(stdscr, row, input_x, " " * input_width, _color(PAIR_INPUT))
-        _safe_addstr(stdscr, row, input_x, state.input_text[-input_width:], _color(PAIR_INPUT))
+        _safe_addstr(stdscr, row, input_x, display_text[-input_width:], _color(PAIR_INPUT))
     if state.input_error and row + 1 < content.y + content.height:
         _safe_addstr(stdscr, row + 1, content.x, state.input_error[: content.width], _color(PAIR_ERROR))
     elif row + 1 < content.y + content.height:
+        help_text = "Enter=run  Esc=cancel  Paste multi-line OK (shows as \\n)"
         _safe_addstr(
             stdscr,
             row + 1,
             content.x,
-            "Enter runs  Esc cancels  Use shell quoting for values with spaces"[: content.width],
-            _color(PAIR_MODAL),
+            help_text[: content.width],
+            _color(PAIR_DIM),
         )
 
 
