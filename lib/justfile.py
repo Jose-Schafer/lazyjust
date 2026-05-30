@@ -71,6 +71,8 @@ def parse_just_list(output: str) -> list[Recipe]:
         name = parts[0]
         if not _is_recipe_name(name):
             continue
+        if name == "default":
+            continue
 
         arguments = tuple(_parse_argument(part) for part in parts[1:])
         is_variadic = any(argument.is_variadic for argument in arguments)

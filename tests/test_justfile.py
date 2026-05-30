@@ -12,11 +12,11 @@ Available recipes:
 
     recipes = parse_just_list(output)
 
-    assert [recipe.name for recipe in recipes] == ["default", "codex", "projects", "lab"]
+    assert [recipe.name for recipe in recipes] == ["codex", "projects", "lab"]
     assert recipes[0].is_namespace is False
-    assert recipes[2].is_variadic is True
-    assert recipes[2].is_namespace is True
-    assert recipes[2].description == "Projects"
+    assert recipes[1].is_variadic is True
+    assert recipes[1].is_namespace is True
+    assert recipes[1].description == "Projects"
 
 
 def test_parse_just_list_ignores_non_recipe_lines() -> None:
