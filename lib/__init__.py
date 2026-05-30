@@ -1,1 +1,1 @@
-"""lazypro package."""
+"""lazyjust package."""

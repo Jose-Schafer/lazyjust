@@ -1,5 +1,5 @@
 [project]
-name = "lazypro"
+name = "lazyjust"
 version = "0.1.0"
 description = "Lazy-style TUI for navigating monorepo justfiles."
 readme = "README.md"
@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.scripts]
-lazypro = "main:main"
+lazyjust = "main:main"
 
 [dependency-groups]
 dev = [

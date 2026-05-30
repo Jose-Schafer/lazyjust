@@ -450,7 +450,10 @@ def _run_command(state: AppState, path: list[str], args: list[str]) -> None:
     returncode = _run_interactive(state, path, args)
     command = _format_just_command(path, args)
     state.output = f"Last command: {command}\nExit code: {returncode}"
-    state.message = f"exit {returncode}: {command}"
+    if returncode == 0:
+        state.message = f"success: {command}"
+    else:
+        state.message = f"exit {returncode}: {command}"
 
 
 def _run_interactive(state: AppState, path: list[str], args: list[str]) -> int:
@@ -458,13 +461,13 @@ def _run_interactive(state: AppState, path: list[str], args: list[str]) -> int:
     curses.endwin()
 
     command = _format_just_command(path, args)
-    print(f"\n[lazypro] running {command}\n")
+    print(f"\n[lazyjust] running {command}\n")
     try:
         returncode = run_recipe(state.cwd, path, args)
     except KeyboardInterrupt:
         returncode = 130
     finally:
-        print("\n[lazypro] press enter to return")
+        print("\n[lazyjust] press enter to return")
         try:
             input()
         except EOFError:
@@ -770,7 +773,8 @@ def _draw_footer(stdscr: curses.window, state: AppState, rect: Rect) -> None:
 
     message = state.message or _selected_command(state)
 
-    attr = _color(PAIR_ERROR) if state.message and state.message.startswith("exit ") else _color(PAIR_FOOTER)
+    is_error = state.message and (state.message.startswith("exit ") or state.message.startswith("failed "))
+    attr = _color(PAIR_ERROR) if is_error else _color(PAIR_FOOTER)
     _safe_addstr(stdscr, rect.y, rect.x, " " * max(0, rect.width - 1), attr)
 
     key_text = "  ".join(f"{key} {description}" for key, description in segments)
@@ -869,7 +873,7 @@ def _help_options(state: AppState) -> list[HelpOption]:
         HelpOption("e", f"open the current justfile in {DEFAULT_EDITOR}", "edit_justfile"),
         HelpOption("r", "reload commands from the current justfile level", "reload"),
         HelpOption("h / backspace", "go back to the parent command group", "back"),
-        HelpOption("q", "quit lazypro", "quit"),
+        HelpOption("q", "quit lazyjust", "quit"),
         HelpOption("? / esc", "close this help popup", "close"),
     ]
 
@@ -1178,7 +1182,7 @@ def _visible_start(selected: int, visible_count: int, total_count: int) -> int:
 
 
 def _draw_too_small(stdscr: curses.window, height: int, width: int) -> None:
-    message = "lazypro needs at least 50x11"
+    message = "lazyjust needs at least 50x11"
     y = max(0, height // 2)
     x = max(0, (width - len(message)) // 2)
     _safe_addstr(stdscr, y, x, message[:width], curses.A_REVERSE)
