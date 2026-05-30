@@ -25,4 +25,4 @@ test:
 
 # Reinstall
 reinstall:
-    uv tool install --reinstall /Users/joseschafer/Documents/lazypro
+    uv tool install --reinstall ~/Documents/lazyjust
