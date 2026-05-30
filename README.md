@@ -9,34 +9,38 @@ The interface follows a lazygit-style pane layout:
 - bottom-right pane: command log and help
 - bottom bar: current path and keybindings
 
+## Installation
+
+### From GitHub
+
+```bash
+uv tool install git+https://github.com/Jose-Schafer/lazyjust.git
+```
+
+### From local clone
+
+```bash
+uv tool install /path/to/lazyjust
+```
+
+After local changes, reinstall:
+
+```bash
+uv tool install --reinstall /path/to/lazyjust
+```
+
 ## Usage
 
-```bash
-just run
-```
-
-Install it as a global uv tool:
-
-```bash
-uv tool install /Users/joseschafer/Documents/lazypro
-```
-
-Then run it from any project root:
+Run from any project root with a justfile:
 
 ```bash
 lazyjust
 ```
 
-For one-off execution without installing:
+Or during development:
 
 ```bash
-uvx --from /Users/joseschafer/Documents/lazypro lazyjust
-```
-
-After local changes, reinstall the global tool:
-
-```bash
-uv tool install --reinstall /Users/joseschafer/Documents/lazypro
+just run
 ```
 
 Controls:
