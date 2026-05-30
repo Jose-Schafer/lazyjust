@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from lib.app import AppState, _help_options, _toggle_lower_view
-from lib.justfile import Recipe
+from lib.app import AppState, _help_options, _recipe_for_path, _toggle_lower_view
+from lib.justfile import Recipe, RecipeArgument
 
 
 def test_help_options_show_open_hint_for_namespace() -> None:
@@ -56,3 +56,20 @@ def test_toggle_lower_view_switches_between_log_and_env() -> None:
 
     _toggle_lower_view(state)
     assert state.lower_view == "log"
+
+
+def test_recipe_for_path_returns_current_pending_recipe() -> None:
+    recipe = Recipe(
+        name="set-client",
+        signature='set-client client env=""',
+        description="",
+        is_variadic=False,
+        is_namespace=False,
+        arguments=(
+            RecipeArgument("client", "client", None, True, False),
+            RecipeArgument("env", 'env=""', "", False, False),
+        ),
+    )
+    state = AppState(cwd=Path("/repo"), path=["projects"], recipes=[recipe])
+
+    assert _recipe_for_path(state, ["projects", "set-client"]) == recipe

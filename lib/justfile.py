@@ -7,12 +7,22 @@ from shlex import split
 
 
 @dataclass(frozen=True)
+class RecipeArgument:
+    name: str
+    token: str
+    default: str | None
+    is_required: bool
+    is_variadic: bool
+
+
+@dataclass(frozen=True)
 class Recipe:
     name: str
     signature: str
     description: str
     is_variadic: bool
     is_namespace: bool
+    arguments: tuple[RecipeArgument, ...] = ()
     working_dir: Path | None = None
 
 
@@ -35,9 +45,9 @@ def list_recipes(cwd: Path, path: list[str] | None = None) -> list[Recipe]:
     return [_with_namespace_status(cwd, just_path, level_dir, delegations, recipe) for recipe in recipes]
 
 
-def run_recipe(cwd: Path, path: list[str]) -> int:
+def run_recipe(cwd: Path, path: list[str], args: list[str] | None = None) -> int:
     result = subprocess.run(
-        ["just", *path],
+        ["just", *path, *(args or [])],
         cwd=cwd,
         check=False,
     )
@@ -62,7 +72,8 @@ def parse_just_list(output: str) -> list[Recipe]:
         if not _is_recipe_name(name):
             continue
 
-        is_variadic = any(part.startswith("*") for part in parts[1:])
+        arguments = tuple(_parse_argument(part) for part in parts[1:])
+        is_variadic = any(argument.is_variadic for argument in arguments)
         recipes.append(
             Recipe(
                 name=name,
@@ -70,6 +81,7 @@ def parse_just_list(output: str) -> list[Recipe]:
                 description=description,
                 is_variadic=is_variadic,
                 is_namespace=is_variadic,
+                arguments=arguments,
             )
         )
 
@@ -86,6 +98,29 @@ def _split_description(line: str) -> tuple[str, str]:
 
 def _is_recipe_name(value: str) -> bool:
     return all(char.isalnum() or char in "_-" for char in value)
+
+
+def _parse_argument(token: str) -> RecipeArgument:
+    is_variadic = token.startswith(("*", "+"))
+    clean = token.removeprefix("*").removeprefix("+").removeprefix("$")
+    name, separator, default = clean.partition("=")
+    return RecipeArgument(
+        name=name,
+        token=token,
+        default=_parse_default(default) if separator else None,
+        is_required=not separator and not is_variadic,
+        is_variadic=is_variadic,
+    )
+
+
+def _parse_default(value: str) -> str:
+    try:
+        parsed = split(value)
+    except ValueError:
+        return value
+    if not parsed:
+        return value
+    return parsed[0]
 
 
 def current_level_dir(cwd: Path, path: list[str]) -> tuple[Path, bool]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import curses
+from shlex import join, split
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,8 @@ PAIR_MODAL_SELECTED = 9
 PAIR_FOOTER_KEY = 10
 PAIR_LOCATION = 11
 PAIR_LOCATION_ACTIVE = 12
+PAIR_ARGUMENT = 13
+PAIR_INPUT = 14
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,10 @@ class AppState:
     show_help: bool = False
     help_selected: int = 0
     lower_view: str = "log"
+    show_input: bool = False
+    input_text: str = ""
+    input_error: str = ""
+    pending_path: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -66,6 +73,10 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
     while True:
         _draw(stdscr, state)
         key = stdscr.getch()
+
+        if state.show_input:
+            _handle_input_key(state, key)
+            continue
 
         if state.show_help:
             if _handle_help_key(state, key):
@@ -160,6 +171,51 @@ def _run_help_action(state: AppState, action: str) -> bool:
     return False
 
 
+def _handle_input_key(state: AppState, key: int) -> None:
+    if key in (27,):
+        _close_input(state)
+        return
+    if key in (curses.KEY_ENTER, 10, 13):
+        _submit_input(state)
+        return
+    if key in (curses.KEY_BACKSPACE, 127, 8):
+        state.input_text = state.input_text[:-1]
+        state.input_error = ""
+        return
+    if key == curses.KEY_DC:
+        state.input_text = ""
+        state.input_error = ""
+        return
+    if 32 <= key < 127:
+        state.input_text += chr(key)
+        state.input_error = ""
+
+
+def _submit_input(state: AppState) -> None:
+    try:
+        args = split(state.input_text)
+    except ValueError as exc:
+        state.input_error = str(exc)
+        return
+
+    recipe = _recipe_for_path(state, state.pending_path)
+    required_count = len([argument for argument in (recipe.arguments if recipe else ()) if argument.is_required])
+    if len(args) < required_count:
+        state.input_error = f"expected at least {required_count} argument(s), got {len(args)}"
+        return
+
+    pending_path = [*state.pending_path]
+    _close_input(state)
+    _run_command(state, pending_path, args)
+
+
+def _close_input(state: AppState) -> None:
+    state.show_input = False
+    state.input_text = ""
+    state.input_error = ""
+    state.pending_path = []
+
+
 def _reload(state: AppState) -> None:
     try:
         state.recipes = list_recipes(state.cwd, state.path)
@@ -188,20 +244,31 @@ def _activate(state: AppState) -> None:
         _reload(state)
         return
 
-    returncode = _run_interactive(state, next_path)
-    command = f"just {' '.join(next_path)}"
+    if recipe.arguments:
+        state.show_input = True
+        state.input_text = ""
+        state.input_error = ""
+        state.pending_path = next_path
+        return
+
+    _run_command(state, next_path, [])
+
+
+def _run_command(state: AppState, path: list[str], args: list[str]) -> None:
+    returncode = _run_interactive(state, path, args)
+    command = _format_just_command(path, args)
     state.output = f"Last command: {command}\nExit code: {returncode}"
     state.message = f"exit {returncode}: {command}"
 
 
-def _run_interactive(state: AppState, path: list[str]) -> int:
+def _run_interactive(state: AppState, path: list[str], args: list[str]) -> int:
     curses.def_prog_mode()
     curses.endwin()
 
-    command = f"just {' '.join(path)}"
+    command = _format_just_command(path, args)
     print(f"\n[lazypro] running {command}\n")
     try:
-        returncode = run_recipe(state.cwd, path)
+        returncode = run_recipe(state.cwd, path, args)
     except KeyboardInterrupt:
         returncode = 130
     finally:
@@ -246,6 +313,8 @@ def _draw(stdscr: curses.window, state: AppState) -> None:
     _draw_details(stdscr, state, details)
     _draw_lower_pane(stdscr, state, output)
     _draw_footer(stdscr, state, footer)
+    if state.show_input:
+        _draw_input_modal(stdscr, state, height, width)
     if state.show_help:
         _draw_help_modal(stdscr, state, height, width)
     stdscr.refresh()
@@ -313,19 +382,45 @@ def _draw_details(stdscr: curses.window, state: AppState, rect: Rect) -> None:
         return
 
     command_path = [*state.path, recipe.name]
-    command = f"just {' '.join(command_path)}"
+    command = _format_just_command(command_path)
     recipe_type = "namespace" if recipe.is_namespace else "command"
-    lines = [
-        f"Name: {recipe.name}",
-        f"Type: {recipe_type}",
-        f"Command: {command}",
-        f"Signature: {recipe.signature}",
-    ]
+    row = content.y
+    row = _write_detail_line(stdscr, content, row, f"Name: {recipe.name}")
+    row = _write_detail_line(stdscr, content, row, f"Type: {recipe_type}")
+    row = _write_detail_line(stdscr, content, row, f"Command: {command}")
+    row = _write_signature_line(stdscr, content, row, recipe)
     if recipe.description:
-        lines.append(f"Description: {recipe.description}")
+        row = _write_detail_line(stdscr, content, row, f"Description: {recipe.description}")
     level_dir, _ = current_level_dir(state.cwd, state.path)
-    lines.append(f"Directory: {level_dir}")
-    _write_wrapped(stdscr, content, lines)
+    _write_detail_line(stdscr, content, row, f"Directory: {level_dir}")
+
+
+def _write_detail_line(stdscr: curses.window, rect: Rect, row: int, value: str) -> int:
+    if row >= rect.y + rect.height:
+        return row
+    _safe_addstr(stdscr, row, rect.x, value[: rect.width].ljust(rect.width))
+    return row + 1
+
+
+def _write_signature_line(stdscr: curses.window, rect: Rect, row: int, recipe: Recipe) -> int:
+    if row >= rect.y + rect.height:
+        return row
+
+    label = "Signature: "
+    x = rect.x
+    _safe_addstr(stdscr, row, x, label)
+    x += len(label)
+    _safe_addstr(stdscr, row, x, recipe.name[: max(0, rect.width - len(label))])
+    x += len(recipe.name)
+
+    for argument in recipe.arguments:
+        token = f" {argument.token}"
+        if x + len(token) >= rect.x + rect.width:
+            break
+        _safe_addstr(stdscr, row, x, token, _color(PAIR_ARGUMENT) | curses.A_BOLD)
+        x += len(token)
+
+    return row + 1
 
 
 def _draw_lower_pane(stdscr: curses.window, state: AppState, rect: Rect) -> None:
@@ -407,6 +502,58 @@ def _draw_footer(stdscr: curses.window, state: AppState, rect: Rect) -> None:
         x += len(text)
 
 
+def _draw_input_modal(stdscr: curses.window, state: AppState, height: int, width: int) -> None:
+    recipe = _recipe_for_path(state, state.pending_path)
+    modal_width = min(88, max(56, width - 10))
+    modal_height = min(max(12, 8 + len(recipe.arguments if recipe else ())), height - 4)
+    rect = Rect(
+        y=max(1, (height - modal_height) // 2),
+        x=max(0, (width - modal_width) // 2),
+        height=modal_height,
+        width=modal_width,
+    )
+
+    _draw_filled_box(stdscr, rect, "Arguments")
+    content = _inner(rect)
+    command = _format_just_command(state.pending_path)
+    row = content.y
+    row = _write_detail_line(stdscr, content, row, f"Command: {command}")
+    row = _write_detail_line(stdscr, content, row, "Expected variables:")
+
+    if recipe and recipe.arguments:
+        for argument in recipe.arguments:
+            if row >= content.y + content.height - 4:
+                break
+            label = "required" if argument.is_required else "optional"
+            if argument.is_variadic:
+                label = "variadic"
+            default = f" default={argument.default}" if argument.default is not None else ""
+            _safe_addstr(stdscr, row, content.x + 2, argument.name, _color(PAIR_ARGUMENT) | curses.A_BOLD)
+            suffix = f"  {label}{default}"
+            _safe_addstr(stdscr, row, content.x + 2 + len(argument.name), suffix[: max(0, content.width - 2)])
+            row += 1
+    else:
+        row = _write_detail_line(stdscr, content, row, "  none")
+
+    row += 1
+    if row < content.y + content.height:
+        _safe_addstr(stdscr, row, content.x, "Args:", _color(PAIR_ARGUMENT) | curses.A_BOLD)
+        input_x = content.x + 6
+        input_width = max(0, content.width - 7)
+        _safe_addstr(stdscr, row, input_x, " " * input_width, _color(PAIR_INPUT))
+        _safe_addstr(stdscr, row, input_x, state.input_text[-input_width:], _color(PAIR_INPUT))
+    if state.input_error and row + 1 < content.y + content.height:
+        _safe_addstr(stdscr, row + 1, content.x, state.input_error[: content.width], _color(PAIR_ERROR))
+    elif row + 1 < content.y + content.height:
+        _safe_addstr(
+            stdscr,
+            row + 1,
+            content.x,
+            "Enter runs  Esc cancels  Use shell quoting for values with spaces"[: content.width],
+            _color(PAIR_MODAL),
+        )
+
+
 def _draw_help_modal(stdscr: curses.window, state: AppState, height: int, width: int) -> None:
     modal_width = min(78, max(50, width - 8))
     modal_height = min(18, max(12, height - 4))
@@ -442,10 +589,7 @@ def _help_options(state: AppState) -> list[HelpOption]:
     if recipe.is_namespace:
         options.insert(0, HelpOption("enter / l", f"open {recipe.name} and list its commands", "activate"))
     else:
-        options.insert(
-            0,
-            HelpOption("enter / l", f"run just {' '.join([*state.path, recipe.name])}", "activate"),
-        )
+        options.insert(0, HelpOption("enter / l", f"run {_format_just_command([*state.path, recipe.name])}", "activate"))
 
     if recipe.description:
         options.append(HelpOption("selected", recipe.description, "close"))
@@ -546,6 +690,13 @@ def _selected_recipe(state: AppState) -> Recipe | None:
     return state.recipes[state.selected]
 
 
+def _recipe_for_path(state: AppState, path: list[str]) -> Recipe | None:
+    if not path or path[:-1] != state.path:
+        return None
+    name = path[-1]
+    return next((recipe for recipe in state.recipes if recipe.name == name), None)
+
+
 def _recipe_label(recipe: Recipe) -> str:
     if recipe.is_namespace:
         return f" > {recipe.name}/"
@@ -570,7 +721,11 @@ def _selected_command(state: AppState) -> str:
     recipe = _selected_recipe(state)
     if recipe is None:
         return "no command selected"
-    return f"just {' '.join([*state.path, recipe.name])}"
+    return _format_just_command([*state.path, recipe.name])
+
+
+def _format_just_command(path: list[str], args: list[str] | None = None) -> str:
+    return join(["just", *path, *(args or [])])
 
 
 def _visible_start(selected: int, visible_count: int, total_count: int) -> int:
@@ -609,6 +764,8 @@ def _init_colors() -> None:
     curses.init_pair(PAIR_FOOTER_KEY, curses.COLOR_YELLOW, curses.COLOR_BLUE)
     curses.init_pair(PAIR_LOCATION, curses.COLOR_WHITE, -1)
     curses.init_pair(PAIR_LOCATION_ACTIVE, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+    curses.init_pair(PAIR_ARGUMENT, curses.COLOR_MAGENTA, -1)
+    curses.init_pair(PAIR_INPUT, curses.COLOR_BLACK, curses.COLOR_WHITE)
 
 
 def _color(pair: int) -> int:
@@ -621,6 +778,7 @@ def _color(pair: int) -> int:
                 PAIR_FOOTER,
                 PAIR_MODAL_SELECTED,
                 PAIR_LOCATION_ACTIVE,
+                PAIR_INPUT,
             }
             else curses.A_NORMAL
         )

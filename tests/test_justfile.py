@@ -34,6 +34,28 @@ Available recipes:
     assert recipes[0].description == "Build project"
 
 
+def test_parse_just_list_extracts_recipe_arguments() -> None:
+    output = """
+Available recipes:
+    set-client client env=""
+    run-many *args
+"""
+
+    recipes = {recipe.name: recipe for recipe in parse_just_list(output)}
+
+    set_client_args = recipes["set-client"].arguments
+    assert [argument.name for argument in set_client_args] == ["client", "env"]
+    assert set_client_args[0].is_required is True
+    assert set_client_args[0].default is None
+    assert set_client_args[1].is_required is False
+    assert set_client_args[1].default == ""
+    assert set_client_args[1].token == 'env=""'
+
+    run_many_args = recipes["run-many"].arguments
+    assert run_many_args[0].name == "args"
+    assert run_many_args[0].is_variadic is True
+
+
 def test_list_recipes_only_marks_variadic_delegates_as_namespaces(tmp_path) -> None:
     (tmp_path / "projects").mkdir()
     (tmp_path / "projects" / "justfile").write_text(
