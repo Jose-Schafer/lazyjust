@@ -1,6 +1,14 @@
 from pathlib import Path
 
-from lib.app import AppState, _go_back, _help_options, _recipe_for_path, _toggle_lower_view
+from lib.app import (
+    AppState,
+    _go_back,
+    _help_options,
+    _important_env_values,
+    _parse_env_assignment,
+    _recipe_for_path,
+    _toggle_lower_view,
+)
 from lib.justfile import Recipe, RecipeArgument
 
 
@@ -83,3 +91,24 @@ def test_go_back_pops_current_path_level(tmp_path) -> None:
     _go_back(state)
 
     assert state.path == ["projects"]
+
+
+def test_parse_env_assignment_handles_export_and_spacing() -> None:
+    assert _parse_env_assignment("export AWS_PROFILE=dev") == ("export ", "AWS_PROFILE", "dev")
+    assert _parse_env_assignment("  AWS_REGION=us-east-1") == ("  ", "AWS_REGION", "us-east-1")
+    assert _parse_env_assignment("# AWS_PROFILE=dev") is None
+
+
+def test_important_env_values_extracts_priority_keys(tmp_path) -> None:
+    (tmp_path / ".env").write_text(
+        """
+IGNORED=value
+AWS_PROFILE=dev-retail-agent-admin
+AWS_REGION=us-east-1
+""".strip()
+    )
+
+    assert _important_env_values(tmp_path) == [
+        ("AWS_PROFILE", "dev-retail-agent-admin"),
+        ("AWS_REGION", "us-east-1"),
+    ]

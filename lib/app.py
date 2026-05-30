@@ -23,6 +23,19 @@ PAIR_LOCATION = 11
 PAIR_LOCATION_ACTIVE = 12
 PAIR_ARGUMENT = 13
 PAIR_INPUT = 14
+PAIR_ENV_KEY = 15
+
+IMPORTANT_ENV_KEYS = (
+    "AWS_PROFILE",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "AWS_ACCOUNT_ID",
+    "CDK_DEFAULT_ACCOUNT",
+    "CDK_DEFAULT_REGION",
+    "ENV",
+    "STAGE",
+    "CLIENT_ID",
+)
 
 
 @dataclass(frozen=True)
@@ -394,7 +407,8 @@ def _draw_details(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     if recipe.description:
         row = _write_detail_line(stdscr, content, row, f"Description: {recipe.description}")
     level_dir, _ = current_level_dir(state.cwd, state.path)
-    _write_detail_line(stdscr, content, row, f"Directory: {level_dir}")
+    row = _write_detail_line(stdscr, content, row, f"Directory: {level_dir}")
+    _write_context_lines(stdscr, content, row, level_dir)
 
 
 def _write_detail_line(stdscr: curses.window, rect: Rect, row: int, value: str) -> int:
@@ -423,6 +437,35 @@ def _write_signature_line(stdscr: curses.window, rect: Rect, row: int, recipe: R
         x += len(token)
 
     return row + 1
+
+
+def _write_context_lines(stdscr: curses.window, rect: Rect, row: int, directory: Path) -> int:
+    important_values = _important_env_values(directory)
+    if not important_values or row >= rect.y + rect.height:
+        return row
+
+    row = _write_detail_line(stdscr, rect, row + 1, "Context:")
+    for name, value in important_values:
+        if row >= rect.y + rect.height:
+            break
+        _write_key_value_line(stdscr, rect, row, name, value)
+        row += 1
+    return row
+
+
+def _write_key_value_line(
+    stdscr: curses.window,
+    rect: Rect,
+    row: int,
+    name: str,
+    value: str,
+) -> None:
+    x = rect.x
+    key = f"{name}: "
+    _safe_addstr(stdscr, row, x, key[: rect.width], _color(PAIR_ENV_KEY) | curses.A_BOLD)
+    x += len(key)
+    available = max(0, rect.width - len(key))
+    _safe_addstr(stdscr, row, x, value[:available].ljust(available))
 
 
 def _draw_lower_pane(stdscr: curses.window, state: AppState, rect: Rect) -> None:
@@ -467,9 +510,14 @@ def _draw_env(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     try:
         lines = env_path.read_text().splitlines()
     except OSError as exc:
-        lines = [f"Could not read {env_path}: {exc}"]
+        _write_wrapped(stdscr, content, [f"Could not read {env_path}: {exc}"])
+        return
 
-    _write_wrapped(stdscr, content, lines or [f"{env_path} is empty"])
+    if not lines:
+        _write_wrapped(stdscr, content, [f"{env_path} is empty"])
+        return
+
+    _write_env_lines(stdscr, content, lines)
 
 
 def _draw_footer(stdscr: curses.window, state: AppState, rect: Rect) -> None:
@@ -641,6 +689,71 @@ def _write_wrapped(
         _safe_addstr(stdscr, rect.y + index, rect.x, line[: rect.width].ljust(rect.width))
 
 
+def _write_env_lines(stdscr: curses.window, rect: Rect, lines: list[str]) -> None:
+    for index, line in enumerate(lines[: rect.height]):
+        y = rect.y + index
+        _safe_addstr(stdscr, y, rect.x, " " * rect.width)
+        assignment = _parse_env_assignment(line)
+        if assignment is None:
+            attr = _color(PAIR_DIM) if line.strip().startswith("#") else curses.A_NORMAL
+            _safe_addstr(stdscr, y, rect.x, line[: rect.width], attr)
+            continue
+
+        prefix, name, value = assignment
+        x = rect.x
+        if prefix:
+            _safe_addstr(stdscr, y, x, prefix[: rect.width])
+            x += len(prefix)
+        _safe_addstr(stdscr, y, x, name[: max(0, rect.width - (x - rect.x))], _color(PAIR_ENV_KEY) | curses.A_BOLD)
+        x += len(name)
+        if x < rect.x + rect.width:
+            _safe_addstr(stdscr, y, x, "=")
+            x += 1
+        if x < rect.x + rect.width:
+            _safe_addstr(stdscr, y, x, value[: max(0, rect.width - (x - rect.x))])
+
+
+def _important_env_values(directory: Path) -> list[tuple[str, str]]:
+    env_path = directory / ".env"
+    if not env_path.is_file():
+        return []
+
+    try:
+        lines = env_path.read_text().splitlines()
+    except OSError:
+        return []
+
+    values: dict[str, str] = {}
+    for line in lines:
+        assignment = _parse_env_assignment(line)
+        if assignment is None:
+            continue
+        _, name, value = assignment
+        if name in IMPORTANT_ENV_KEYS and value:
+            values[name] = value
+
+    return [(name, values[name]) for name in IMPORTANT_ENV_KEYS if name in values]
+
+
+def _parse_env_assignment(line: str) -> tuple[str, str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None
+
+    leading_spaces = line[: len(line) - len(line.lstrip())]
+    body = line.strip()
+    export_prefix = ""
+    if body.startswith("export "):
+        export_prefix = "export "
+        body = body[len("export ") :].lstrip()
+
+    name, value = body.split("=", maxsplit=1)
+    if not name or not all(char.isalnum() or char == "_" for char in name):
+        return None
+
+    return leading_spaces + export_prefix, name, value
+
+
 def _draw_box(stdscr: curses.window, rect: Rect, title: str) -> None:
     if rect.height <= 1 or rect.width <= 1:
         return
@@ -768,6 +881,7 @@ def _init_colors() -> None:
     curses.init_pair(PAIR_LOCATION_ACTIVE, curses.COLOR_BLACK, curses.COLOR_YELLOW)
     curses.init_pair(PAIR_ARGUMENT, curses.COLOR_MAGENTA, -1)
     curses.init_pair(PAIR_INPUT, curses.COLOR_BLACK, curses.COLOR_WHITE)
+    curses.init_pair(PAIR_ENV_KEY, curses.COLOR_GREEN, -1)
 
 
 def _color(pair: int) -> int:
