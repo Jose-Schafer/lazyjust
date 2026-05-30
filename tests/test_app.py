@@ -2,6 +2,7 @@ from pathlib import Path
 
 from lib.app import (
     AppState,
+    _activate,
     _go_back,
     _help_options,
     _important_env_values,
@@ -91,6 +92,34 @@ def test_go_back_pops_current_path_level(tmp_path) -> None:
     _go_back(state)
 
     assert state.path == ["projects"]
+
+
+def test_go_back_restores_selection_from_parent_level(tmp_path) -> None:
+    (tmp_path / "admin").mkdir()
+    (tmp_path / "admin" / "justfile").write_text("deploy:\n    echo deploy\n")
+    (tmp_path / "justfile").write_text(
+        """
+default:
+    @just --list
+
+bootstrap:
+    echo bootstrap
+
+admin *args:
+    just "$@"
+""".strip()
+    )
+    recipes = [
+        Recipe("bootstrap", "bootstrap", "", False, False),
+        Recipe("admin", "admin *args", "", True, True),
+    ]
+    state = AppState(cwd=tmp_path, recipes=recipes, selected=1)
+
+    _activate(state)
+    _go_back(state)
+
+    assert state.path == []
+    assert state.selected == 1
 
 
 def test_parse_env_assignment_handles_export_and_spacing() -> None:

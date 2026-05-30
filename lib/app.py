@@ -60,6 +60,7 @@ class AppState:
     input_text: str = ""
     input_error: str = ""
     pending_path: list[str] = field(default_factory=list)
+    selected_by_path: dict[tuple[str, ...], int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -242,7 +243,9 @@ def _toggle_lower_view(state: AppState) -> None:
 
 def _go_back(state: AppState) -> None:
     if state.path:
+        state.selected_by_path[_path_key(state.path)] = state.selected
         state.path.pop()
+        state.selected = state.selected_by_path.get(_path_key(state.path), 0)
         _reload(state)
 
 
@@ -254,8 +257,9 @@ def _activate(state: AppState) -> None:
     next_path = [*state.path, recipe.name]
 
     if recipe.is_namespace:
+        state.selected_by_path[_path_key(state.path)] = state.selected
         state.path = next_path
-        state.selected = 0
+        state.selected = state.selected_by_path.get(_path_key(state.path), 0)
         _reload(state)
         return
 
@@ -841,6 +845,10 @@ def _selected_command(state: AppState) -> str:
 
 def _format_just_command(path: list[str], args: list[str] | None = None) -> str:
     return join(["just", *path, *(args or [])])
+
+
+def _path_key(path: list[str]) -> tuple[str, ...]:
+    return tuple(path)
 
 
 def _visible_start(selected: int, visible_count: int, total_count: int) -> int:
