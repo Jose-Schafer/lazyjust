@@ -45,9 +45,9 @@ Controls:
 - `enter` / `l`: open a variadic delegation recipe or run a recipe
 - `tab` / `e`: switch the lower pane between logs and the current level `.env`
 - `?`: show context-aware keybinding hints
-- `h` / `backspace`: go up
+- `h` / `esc` / `backspace`: go up
 - `r`: reload
-- `q` / `esc`: quit
+- `q`: quit
 
 Recipes with variadic arguments, such as `@projects *args`, are treated as folders.
 Opening one runs `just projects --list`, so delegated service justfiles can be browsed.

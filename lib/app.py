@@ -87,7 +87,7 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
             state.show_help = True
             state.help_selected = 0
             continue
-        if key in (ord("q"), 27):
+        if key == ord("q"):
             return 0
         if key in (curses.KEY_UP, ord("k")):
             state.selected = max(0, state.selected - 1)
@@ -95,10 +95,8 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
         if key in (curses.KEY_DOWN, ord("j")):
             state.selected = min(max(0, len(state.recipes) - 1), state.selected + 1)
             continue
-        if key in (curses.KEY_BACKSPACE, 127, 8, ord("h")):
-            if state.path:
-                state.path.pop()
-                _reload(state)
+        if key in (curses.KEY_BACKSPACE, 127, 8, ord("h"), 27):
+            _go_back(state)
             continue
         if key in (9, ord("e")):
             _toggle_lower_view(state)
@@ -159,9 +157,7 @@ def _run_help_action(state: AppState, action: str) -> bool:
         _toggle_lower_view(state)
         return False
     if action == "back":
-        if state.path:
-            state.path.pop()
-            _reload(state)
+        _go_back(state)
         return False
     if action == "quit":
         return True
@@ -229,6 +225,12 @@ def _reload(state: AppState) -> None:
 
 def _toggle_lower_view(state: AppState) -> None:
     state.lower_view = "env" if state.lower_view == "log" else "log"
+
+
+def _go_back(state: AppState) -> None:
+    if state.path:
+        state.path.pop()
+        _reload(state)
 
 
 def _activate(state: AppState) -> None:
@@ -474,7 +476,7 @@ def _draw_footer(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     segments = [
         ("j/k", "move"),
         ("enter", "open/run"),
-        ("h", "back"),
+        ("h/esc", "back"),
         ("tab/e", ".env"),
         ("?", "help"),
         ("r", "reload"),

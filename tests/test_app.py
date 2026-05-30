@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from lib.app import AppState, _help_options, _recipe_for_path, _toggle_lower_view
+from lib.app import AppState, _go_back, _help_options, _recipe_for_path, _toggle_lower_view
 from lib.justfile import Recipe, RecipeArgument
 
 
@@ -73,3 +73,13 @@ def test_recipe_for_path_returns_current_pending_recipe() -> None:
     state = AppState(cwd=Path("/repo"), path=["projects"], recipes=[recipe])
 
     assert _recipe_for_path(state, ["projects", "set-client"]) == recipe
+
+
+def test_go_back_pops_current_path_level(tmp_path) -> None:
+    (tmp_path / "projects").mkdir()
+    (tmp_path / "projects" / "justfile").write_text("default:\n    @just --list\n")
+    state = AppState(cwd=tmp_path, path=["projects", "admin"])
+
+    _go_back(state)
+
+    assert state.path == ["projects"]
