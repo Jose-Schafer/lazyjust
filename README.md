@@ -2,6 +2,8 @@
 
 Lazy-style terminal UI for navigating monorepo `justfile` commands.
 
+![lazyjust demo](gif/example.gif)
+
 The interface follows a lazygit-style pane layout:
 
 - left pane: just recipes
@@ -59,3 +61,15 @@ Controls:
 
 Recipes with variadic arguments, such as `@projects *args`, are treated as folders.
 Opening one runs `just projects --list`, so delegated service justfiles can be browsed.
+
+## Claude Code Skill
+
+A comprehensive skill for configuring justfiles compatible with lazyjust is available at `skills/justfile-config/skill.md`.
+
+Use it in Claude Code to:
+- Set up delegation patterns with `[working-directory]` attributes
+- Configure variadic recipes as navigable namespaces
+- Structure monorepo justfile hierarchies
+- Avoid common anti-patterns
+
+The skill includes examples, best practices, and debugging tips for optimal lazyjust integration.
