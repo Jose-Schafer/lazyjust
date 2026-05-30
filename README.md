@@ -44,6 +44,7 @@ Controls:
 - `j` / `k` or arrow keys: navigate
 - `enter`: open a variadic delegation recipe or run a recipe
 - `l`: open a variadic delegation recipe only; never runs commands
+- `[` / `]`: move focus between panes
 - `tab`: switch the lower pane between logs and the current level `.env`
 - `e`: open the current level `justfile` in Zed
 - `?`: show context-aware keybinding hints

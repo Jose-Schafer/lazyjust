@@ -32,6 +32,7 @@ PAIR_LOCATION_ACTIVE = 12
 PAIR_ARGUMENT = 13
 PAIR_INPUT = 14
 PAIR_ENV_KEY = 15
+PAIR_FOCUS_BORDER = 16
 
 IMPORTANT_ENV_KEYS = (
     "AWS_PROFILE",
@@ -45,6 +46,7 @@ IMPORTANT_ENV_KEYS = (
     "CLIENT_ID",
 )
 DEFAULT_EDITOR = "zed"
+PANE_ORDER = ("commands", "command", "lower")
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,7 @@ class AppState:
     input_error: str = ""
     pending_path: list[str] = field(default_factory=list)
     selected_by_path: dict[tuple[str, ...], int] = field(default_factory=dict)
+    focused_pane: str = "commands"
 
 
 @dataclass(frozen=True)
@@ -120,6 +123,12 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
             continue
         if key in (curses.KEY_BACKSPACE, 127, 8, ord("h"), 27):
             _go_back(state)
+            continue
+        if key == ord("]"):
+            _move_focus(state, 1)
+            continue
+        if key == ord("["):
+            _move_focus(state, -1)
             continue
         if key == 9:
             _toggle_lower_view(state)
@@ -257,6 +266,14 @@ def _reload(state: AppState) -> None:
 
 def _toggle_lower_view(state: AppState) -> None:
     state.lower_view = "env" if state.lower_view == "log" else "log"
+
+
+def _move_focus(state: AppState, delta: int) -> None:
+    try:
+        current_index = PANE_ORDER.index(state.focused_pane)
+    except ValueError:
+        current_index = 0
+    state.focused_pane = PANE_ORDER[(current_index + delta) % len(PANE_ORDER)]
 
 
 def _open_current_justfile(state: AppState) -> None:
@@ -418,7 +435,7 @@ def _draw_location(stdscr: curses.window, state: AppState, rect: Rect) -> None:
 
 
 def _draw_recipes(stdscr: curses.window, state: AppState, rect: Rect) -> None:
-    _draw_box(stdscr, rect, f"Commands: {_current_level_name(state)}")
+    _draw_box(stdscr, rect, f"Commands: {_current_level_name(state)}", _is_focused(state, "commands"))
     content = _inner(rect)
     list_height = max(0, content.height)
     start = _visible_start(state.selected, list_height, len(state.recipes))
@@ -440,7 +457,7 @@ def _draw_recipes(stdscr: curses.window, state: AppState, rect: Rect) -> None:
 
 
 def _draw_details(stdscr: curses.window, state: AppState, rect: Rect) -> None:
-    _draw_box(stdscr, rect, "Command")
+    _draw_box(stdscr, rect, "Command", _is_focused(state, "command"))
     content = _inner(rect)
     recipe = _selected_recipe(state)
 
@@ -542,7 +559,7 @@ def _draw_lower_pane(stdscr: curses.window, state: AppState, rect: Rect) -> None
 
 
 def _draw_log(stdscr: curses.window, state: AppState, rect: Rect) -> None:
-    _draw_box(stdscr, rect, "Log  [tab: .env]")
+    _draw_box(stdscr, rect, "Log  [tab: .env]", _is_focused(state, "lower"))
     content = _inner(rect)
     lines: list[str] = []
     if state.output:
@@ -563,7 +580,7 @@ def _draw_env(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     level_dir, resolved = current_level_dir(state.cwd, state.path)
     env_path = level_dir / ".env"
     title = ".env  [tab: log]"
-    _draw_box(stdscr, rect, title)
+    _draw_box(stdscr, rect, title, _is_focused(state, "lower"))
     content = _inner(rect)
 
     if not resolved:
@@ -592,6 +609,7 @@ def _draw_footer(stdscr: curses.window, state: AppState, rect: Rect) -> None:
         ("enter", "open/run"),
         ("l", "open dir"),
         ("h/esc", "back"),
+        ("[/]", "pane"),
         ("tab", ".env"),
         ("e", "edit"),
         ("?", "help"),
@@ -694,6 +712,7 @@ def _help_options(state: AppState) -> list[HelpOption]:
     options: list[HelpOption] = [
         HelpOption("j / down", "select next command", "select_down"),
         HelpOption("k / up", "select previous command", "select_up"),
+        HelpOption("[ / ]", "move focus between panes", "close"),
         HelpOption("tab", "toggle the lower pane between log and .env", "toggle_env"),
         HelpOption("e", f"open the current justfile in {DEFAULT_EDITOR}", "edit_justfile"),
         HelpOption("r", "reload commands from the current justfile level", "reload"),
@@ -823,11 +842,11 @@ def _parse_env_assignment(line: str) -> tuple[str, str, str] | None:
     return leading_spaces + export_prefix, name, value
 
 
-def _draw_box(stdscr: curses.window, rect: Rect, title: str) -> None:
+def _draw_box(stdscr: curses.window, rect: Rect, title: str, focused: bool = False) -> None:
     if rect.height <= 1 or rect.width <= 1:
         return
 
-    attr = _color(PAIR_BORDER)
+    attr = _color(PAIR_FOCUS_BORDER) | curses.A_BOLD if focused else _color(PAIR_BORDER)
     top = "+" + "-" * max(0, rect.width - 2) + "+"
     middle = "|" + " " * max(0, rect.width - 2) + "|"
     bottom = top
@@ -838,7 +857,8 @@ def _draw_box(stdscr: curses.window, rect: Rect, title: str) -> None:
     _safe_addstr(stdscr, rect.y + rect.height - 1, rect.x, bottom[: rect.width], attr)
 
     label = f" {title} "
-    _safe_addstr(stdscr, rect.y, rect.x + 2, label[: max(0, rect.width - 4)], _color(PAIR_KEY))
+    label_attr = _color(PAIR_FOCUS_BORDER) | curses.A_BOLD if focused else _color(PAIR_KEY)
+    _safe_addstr(stdscr, rect.y, rect.x + 2, label[: max(0, rect.width - 4)], label_attr)
 
 
 def _draw_filled_box(stdscr: curses.window, rect: Rect, title: str) -> None:
@@ -899,6 +919,10 @@ def _current_level_name(state: AppState) -> str:
     if state.path:
         return state.path[-1]
     return "root"
+
+
+def _is_focused(state: AppState, pane: str) -> bool:
+    return state.focused_pane == pane
 
 
 def _current_justfile(state: AppState) -> Path | None:
@@ -962,6 +986,7 @@ def _init_colors() -> None:
     curses.init_pair(PAIR_ARGUMENT, curses.COLOR_MAGENTA, -1)
     curses.init_pair(PAIR_INPUT, curses.COLOR_BLACK, curses.COLOR_WHITE)
     curses.init_pair(PAIR_ENV_KEY, curses.COLOR_GREEN, -1)
+    curses.init_pair(PAIR_FOCUS_BORDER, curses.COLOR_YELLOW, -1)
 
 
 def _color(pair: int) -> int:

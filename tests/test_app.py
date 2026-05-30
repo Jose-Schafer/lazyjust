@@ -8,6 +8,7 @@ from lib.app import (
     _help_options,
     _important_env_values,
     _context_warnings,
+    _move_focus,
     _open_namespace,
     _parse_env_assignment,
     _recipe_for_path,
@@ -64,6 +65,22 @@ def test_toggle_lower_view_switches_between_log_and_env() -> None:
     state = AppState(cwd=Path("/repo"))
 
     assert state.lower_view == "env"
+
+
+def test_move_focus_cycles_between_panes() -> None:
+    state = AppState(cwd=Path("/repo"))
+
+    _move_focus(state, 1)
+    assert state.focused_pane == "command"
+
+    _move_focus(state, 1)
+    assert state.focused_pane == "lower"
+
+    _move_focus(state, 1)
+    assert state.focused_pane == "commands"
+
+    _move_focus(state, -1)
+    assert state.focused_pane == "lower"
 
 
 def test_current_justfile_resolves_current_level(tmp_path) -> None:
