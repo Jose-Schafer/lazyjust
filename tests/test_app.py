@@ -7,6 +7,7 @@ from lib.app import (
     _help_options,
     _important_env_values,
     _context_warnings,
+    _open_namespace,
     _parse_env_assignment,
     _recipe_for_path,
     _toggle_lower_view,
@@ -30,7 +31,7 @@ def test_help_options_show_open_hint_for_namespace() -> None:
 
     options = _help_options(state)
 
-    assert options[0].key == "enter / l"
+    assert options[0].key == "enter/l"
     assert options[0].description == "open projects and list its commands"
     assert options[0].action == "activate"
     assert any(option.key == "selected" and option.description == "Project commands" for option in options)
@@ -53,7 +54,7 @@ def test_help_options_show_run_hint_for_command() -> None:
 
     options = _help_options(state)
 
-    assert options[0].key == "enter / l"
+    assert options[0].key == "enter"
     assert options[0].description == "run just projects test"
     assert options[0].action == "activate"
 
@@ -123,6 +124,19 @@ admin *args:
 
     assert state.path == []
     assert state.selected == 1
+
+
+def test_open_namespace_ignores_regular_commands() -> None:
+    state = AppState(
+        cwd=Path("/repo"),
+        recipes=[
+            Recipe("run", "run", "", False, False),
+        ],
+    )
+
+    _open_namespace(state)
+
+    assert state.path == []
 
 
 def test_parse_env_assignment_handles_export_and_spacing() -> None:

@@ -118,8 +118,11 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
         if key in (ord("r"),):
             _reload(state)
             continue
-        if key in (curses.KEY_ENTER, 10, 13, ord("l")):
+        if key in (curses.KEY_ENTER, 10, 13):
             _activate(state)
+            continue
+        if key == ord("l"):
+            _open_namespace(state)
             continue
 
 
@@ -135,7 +138,7 @@ def _handle_help_key(state: AppState, key: int) -> bool:
     if key in (curses.KEY_DOWN, ord("j")):
         state.help_selected = min(max(0, len(options) - 1), state.help_selected + 1)
         return False
-    if key in (curses.KEY_ENTER, 10, 13, ord("l")) and options:
+    if key in (curses.KEY_ENTER, 10, 13) and options:
         return _run_help_action(state, options[state.help_selected].action)
     if key in (curses.KEY_BACKSPACE, 127, 8):
         return _run_help_action(state, "back")
@@ -257,10 +260,7 @@ def _activate(state: AppState) -> None:
     next_path = [*state.path, recipe.name]
 
     if recipe.is_namespace:
-        state.selected_by_path[_path_key(state.path)] = state.selected
-        state.path = next_path
-        state.selected = state.selected_by_path.get(_path_key(state.path), 0)
-        _reload(state)
+        _enter_namespace(state, next_path)
         return
 
     if recipe.arguments:
@@ -271,6 +271,20 @@ def _activate(state: AppState) -> None:
         return
 
     _run_command(state, next_path, [])
+
+
+def _open_namespace(state: AppState) -> None:
+    recipe = _selected_recipe(state)
+    if recipe is None or not recipe.is_namespace:
+        return
+    _enter_namespace(state, [*state.path, recipe.name])
+
+
+def _enter_namespace(state: AppState, next_path: list[str]) -> None:
+    state.selected_by_path[_path_key(state.path)] = state.selected
+    state.path = next_path
+    state.selected = state.selected_by_path.get(_path_key(state.path), 0)
+    _reload(state)
 
 
 def _run_command(state: AppState, path: list[str], args: list[str]) -> None:
@@ -542,6 +556,7 @@ def _draw_footer(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     segments = [
         ("j/k", "move"),
         ("enter", "open/run"),
+        ("l", "open dir"),
         ("h/esc", "back"),
         ("tab/e", ".env"),
         ("?", "help"),
@@ -655,9 +670,9 @@ def _help_options(state: AppState) -> list[HelpOption]:
         return options
 
     if recipe.is_namespace:
-        options.insert(0, HelpOption("enter / l", f"open {recipe.name} and list its commands", "activate"))
+        options.insert(0, HelpOption("enter/l", f"open {recipe.name} and list its commands", "activate"))
     else:
-        options.insert(0, HelpOption("enter / l", f"run {_format_just_command([*state.path, recipe.name])}", "activate"))
+        options.insert(0, HelpOption("enter", f"run {_format_just_command([*state.path, recipe.name])}", "activate"))
 
     if recipe.description:
         options.append(HelpOption("selected", recipe.description, "close"))
