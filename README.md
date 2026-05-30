@@ -62,6 +62,84 @@ Controls:
 Recipes with variadic arguments, such as `@projects *args`, are treated as folders.
 Opening one runs `just projects --list`, so delegated service justfiles can be browsed.
 
+## Expected Justfile Structure
+
+lazyjust navigates justfiles in nested directories:
+
+```
+repo/
+├── justfile              # Root justfile with namespaces
+├── .env                  # Root environment vars
+├── services/
+│   ├── api/
+│   │   ├── justfile      # API-specific recipes
+│   │   └── .env          # API environment vars
+│   └── web/
+│       ├── justfile      # Web-specific recipes
+│       └── .env          # Web environment vars
+└── tools/
+    └── docker/
+        └── justfile      # Docker recipes
+```
+
+**Root justfile** delegates to nested justfiles:
+```just
+set dotenv-load := true
+
+[working-directory: "services/api"]
+@api *args:
+    just {{ args }}
+
+[working-directory: "services/web"]
+@web *args:
+    just {{ args }}
+```
+
+**Nested justfile** (`services/api/justfile`) has local recipes:
+```just
+set dotenv-load := true
+
+dev: # Start dev server
+    cargo run
+
+test: # Run tests
+    cargo test
+```
+
+Key requirements:
+- Variadic recipes (`*args`) with `[working-directory]` create navigable namespaces
+- Each namespace points to a directory with its own `justfile`
+- Recipe descriptions (`# comment`) appear in detail pane
+- `set dotenv-load := true` enables `.env` viewing with tab key
+
+## Configuration: `.lazyjust.json`
+
+Create `.lazyjust.json` in your project root to define argument presets for recipes with parameters:
+
+```json
+{
+  "_comment": [
+    "Command paths use '/' separator (e.g., 'api/deploy')",
+    "Single-arg/variadic: input passed as-is",
+    "Multi-arg: input split by shell quoting rules"
+  ],
+  "options": {
+    "api/deploy": [
+      "staging",
+      "production"
+    ],
+    "services/web/build": [
+      "dev",
+      "production --minify"
+    ]
+  }
+}
+```
+
+When you run a recipe with arguments, lazyjust shows a selection menu with presets if configured. Press `i` to enter custom input instead.
+
+On first run, lazyjust prompts to create a template config file with examples.
+
 ## Claude Code Skill
 
 A comprehensive skill for configuring justfiles compatible with lazyjust is available at `skills/justfile-config/skill.md`.
