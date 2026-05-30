@@ -290,7 +290,14 @@ def _submit_input(state: AppState) -> None:
 def _process_and_run_input(state: AppState, input_text: str) -> None:
     recipe = _recipe_for_path(state, state.pending_path)
 
-    args = [input_text]
+    if recipe and (recipe.is_variadic or len(recipe.arguments) == 1):
+        args = [input_text]
+    else:
+        try:
+            args = split(input_text)
+        except ValueError as exc:
+            state.input_error = str(exc)
+            return
 
     required_count = len([argument for argument in (recipe.arguments if recipe else ()) if argument.is_required])
     if len(args) < required_count:
