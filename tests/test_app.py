@@ -61,11 +61,13 @@ def test_help_options_show_run_hint_for_command() -> None:
 def test_toggle_lower_view_switches_between_log_and_env() -> None:
     state = AppState(cwd=Path("/repo"))
 
-    _toggle_lower_view(state)
     assert state.lower_view == "env"
 
     _toggle_lower_view(state)
     assert state.lower_view == "log"
+
+    _toggle_lower_view(state)
+    assert state.lower_view == "env"
 
 
 def test_recipe_for_path_returns_current_pending_recipe() -> None:

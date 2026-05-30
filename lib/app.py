@@ -55,7 +55,7 @@ class AppState:
     output: str = ""
     show_help: bool = False
     help_selected: int = 0
-    lower_view: str = "log"
+    lower_view: str = "env"
     show_input: bool = False
     input_text: str = ""
     input_error: str = ""
