@@ -3,6 +3,7 @@ from pathlib import Path
 from lib.app import (
     AppState,
     _activate,
+    _current_justfile,
     _go_back,
     _help_options,
     _important_env_values,
@@ -63,6 +64,22 @@ def test_toggle_lower_view_switches_between_log_and_env() -> None:
     state = AppState(cwd=Path("/repo"))
 
     assert state.lower_view == "env"
+
+
+def test_current_justfile_resolves_current_level(tmp_path) -> None:
+    (tmp_path / "projects").mkdir()
+    (tmp_path / "justfile").write_text(
+        """
+[working-directory('projects')]
+@projects *args:
+    just "$@"
+""".strip()
+    )
+    project_justfile = tmp_path / "projects" / "justfile"
+    project_justfile.write_text("run:\n    echo run\n")
+    state = AppState(cwd=tmp_path, path=["projects"])
+
+    assert _current_justfile(state) == project_justfile
 
     _toggle_lower_view(state)
     assert state.lower_view == "log"

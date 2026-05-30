@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import curses
+import subprocess
 from shlex import join, split
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from lib.justfile import Recipe, current_level_dir, has_dotenv_load, list_recipes, run_recipe
+from lib.justfile import (
+    Recipe,
+    current_level_dir,
+    find_justfile,
+    has_dotenv_load,
+    list_recipes,
+    run_recipe,
+)
 
 
 PAIR_NAMESPACE = 1
@@ -36,6 +44,7 @@ IMPORTANT_ENV_KEYS = (
     "STAGE",
     "CLIENT_ID",
 )
+DEFAULT_EDITOR = "zed"
 
 
 @dataclass(frozen=True)
@@ -112,8 +121,11 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
         if key in (curses.KEY_BACKSPACE, 127, 8, ord("h"), 27):
             _go_back(state)
             continue
-        if key in (9, ord("e")):
+        if key == 9:
             _toggle_lower_view(state)
+            continue
+        if key == ord("e"):
+            _open_current_justfile(state)
             continue
         if key in (ord("r"),):
             _reload(state)
@@ -147,7 +159,7 @@ def _handle_help_key(state: AppState, key: int) -> bool:
         "h": "back",
         "q": "quit",
         "r": "reload",
-        "e": "toggle_env",
+        "e": "edit_justfile",
     }
     if 0 <= key < 256 and (action := action_by_key.get(chr(key))):
         return _run_help_action(state, action)
@@ -172,6 +184,9 @@ def _run_help_action(state: AppState, action: str) -> bool:
         return False
     if action == "toggle_env":
         _toggle_lower_view(state)
+        return False
+    if action == "edit_justfile":
+        _open_current_justfile(state)
         return False
     if action == "back":
         _go_back(state)
@@ -242,6 +257,25 @@ def _reload(state: AppState) -> None:
 
 def _toggle_lower_view(state: AppState) -> None:
     state.lower_view = "env" if state.lower_view == "log" else "log"
+
+
+def _open_current_justfile(state: AppState) -> None:
+    justfile_path = _current_justfile(state)
+    if justfile_path is None:
+        state.message = "no justfile found for current level"
+        return
+
+    try:
+        subprocess.Popen(
+            [DEFAULT_EDITOR, str(justfile_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        state.message = f"failed to open {justfile_path}: {exc}"
+        return
+
+    state.message = f"opened {justfile_path} in {DEFAULT_EDITOR}"
 
 
 def _go_back(state: AppState) -> None:
@@ -508,7 +542,7 @@ def _draw_lower_pane(stdscr: curses.window, state: AppState, rect: Rect) -> None
 
 
 def _draw_log(stdscr: curses.window, state: AppState, rect: Rect) -> None:
-    _draw_box(stdscr, rect, "Log  [tab/e: .env]")
+    _draw_box(stdscr, rect, "Log  [tab: .env]")
     content = _inner(rect)
     lines: list[str] = []
     if state.output:
@@ -528,7 +562,7 @@ def _draw_log(stdscr: curses.window, state: AppState, rect: Rect) -> None:
 def _draw_env(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     level_dir, resolved = current_level_dir(state.cwd, state.path)
     env_path = level_dir / ".env"
-    title = ".env  [tab/e: log]"
+    title = ".env  [tab: log]"
     _draw_box(stdscr, rect, title)
     content = _inner(rect)
 
@@ -558,7 +592,8 @@ def _draw_footer(stdscr: curses.window, state: AppState, rect: Rect) -> None:
         ("enter", "open/run"),
         ("l", "open dir"),
         ("h/esc", "back"),
-        ("tab/e", ".env"),
+        ("tab", ".env"),
+        ("e", "edit"),
         ("?", "help"),
         ("r", "reload"),
         ("q", "quit"),
@@ -659,7 +694,8 @@ def _help_options(state: AppState) -> list[HelpOption]:
     options: list[HelpOption] = [
         HelpOption("j / down", "select next command", "select_down"),
         HelpOption("k / up", "select previous command", "select_up"),
-        HelpOption("tab / e", "toggle the lower pane between log and .env", "toggle_env"),
+        HelpOption("tab", "toggle the lower pane between log and .env", "toggle_env"),
+        HelpOption("e", f"open the current justfile in {DEFAULT_EDITOR}", "edit_justfile"),
         HelpOption("r", "reload commands from the current justfile level", "reload"),
         HelpOption("h / backspace", "go back to the parent command group", "back"),
         HelpOption("q", "quit lazypro", "quit"),
@@ -863,6 +899,13 @@ def _current_level_name(state: AppState) -> str:
     if state.path:
         return state.path[-1]
     return "root"
+
+
+def _current_justfile(state: AppState) -> Path | None:
+    level_dir, resolved = current_level_dir(state.cwd, state.path)
+    if not resolved:
+        return None
+    return find_justfile(level_dir)
 
 
 def _selected_command(state: AppState) -> str:

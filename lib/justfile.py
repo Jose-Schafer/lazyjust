@@ -141,7 +141,7 @@ def current_level_dir(cwd: Path, path: list[str]) -> tuple[Path, bool]:
 
 
 def parse_working_directories(justfile_dir: Path) -> dict[str, Path]:
-    justfile_path = _find_justfile(justfile_dir)
+    justfile_path = find_justfile(justfile_dir)
     if justfile_path is None:
         return {}
 
@@ -173,7 +173,7 @@ def parse_working_directories(justfile_dir: Path) -> dict[str, Path]:
 
 
 def has_dotenv_load(justfile_dir: Path) -> bool:
-    justfile_path = _find_justfile(justfile_dir)
+    justfile_path = find_justfile(justfile_dir)
     if justfile_path is None:
         return False
 
@@ -241,7 +241,7 @@ def _parse_recipe_header(line: str) -> str | None:
     return first if _is_recipe_name(first) else None
 
 
-def _find_justfile(directory: Path) -> Path | None:
+def find_justfile(directory: Path) -> Path | None:
     for name in ("justfile", "Justfile", ".justfile"):
         path = directory / name
         if path.is_file():
@@ -250,4 +250,4 @@ def _find_justfile(directory: Path) -> Path | None:
 
 
 def _has_justfile(directory: Path) -> bool:
-    return _find_justfile(directory) is not None
+    return find_justfile(directory) is not None

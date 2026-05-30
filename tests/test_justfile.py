@@ -1,5 +1,6 @@
 from lib.justfile import (
     current_level_dir,
+    find_justfile,
     has_dotenv_load,
     list_recipes,
     parse_just_list,
@@ -159,3 +160,10 @@ def test_has_dotenv_load_returns_false_when_missing(tmp_path) -> None:
     (tmp_path / "justfile").write_text("run:\n    echo run\n")
 
     assert has_dotenv_load(tmp_path) is False
+
+
+def test_find_justfile_returns_supported_names(tmp_path) -> None:
+    justfile = tmp_path / ".justfile"
+    justfile.write_text("run:\n    echo run\n")
+
+    assert find_justfile(tmp_path) == justfile
