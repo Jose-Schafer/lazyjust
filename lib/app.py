@@ -9,7 +9,10 @@ from pathlib import Path
 
 from lib.justfile import (
     Recipe,
+    RecipeSearchResult,
+    collect_recipes,
     current_level_dir,
+    filter_recipe_results,
     find_justfile,
     has_dotenv_load,
     list_recipes,
@@ -71,8 +74,17 @@ class AppState:
     input_text: str = ""
     input_error: str = ""
     pending_path: list[str] = field(default_factory=list)
+    pending_recipe: Recipe | None = None
     selected_by_path: dict[tuple[str, ...], int] = field(default_factory=dict)
     focused_pane: str = "commands"
+    show_search: bool = False
+    search_query: str = ""
+    search_index: list[RecipeSearchResult] = field(default_factory=list)
+    search_index_loaded: bool = False
+    search_results: list[RecipeSearchResult] = field(default_factory=list)
+    search_flat_items: list[tuple[Path, RecipeSearchResult | None]] = field(default_factory=list)
+    search_selected: int = 0
+    search_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -104,11 +116,18 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
             _handle_input_key(state, key)
             continue
 
+        if state.show_search:
+            _handle_search_key(state, key)
+            continue
+
         if state.show_help:
             if _handle_help_key(state, key):
                 return 0
             continue
 
+        if key == ord("/"):
+            _open_search(state)
+            continue
         if key == ord("?"):
             state.show_help = True
             state.help_selected = 0
@@ -116,12 +135,15 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
         if key == ord("q"):
             return 0
         if key in (curses.KEY_UP, ord("k")):
-            state.selected = max(0, state.selected - 1)
+            _move_selection(state, -1)
             continue
         if key in (curses.KEY_DOWN, ord("j")):
-            state.selected = min(max(0, len(state.recipes) - 1), state.selected + 1)
+            _move_selection(state, 1)
             continue
         if key in (curses.KEY_BACKSPACE, 127, 8, ord("h"), 27):
+            if _search_active(state):
+                _clear_search(state)
+                continue
             _go_back(state)
             continue
         if key == ord("]"):
@@ -169,6 +191,7 @@ def _handle_help_key(state: AppState, key: int) -> bool:
         "q": "quit",
         "r": "reload",
         "e": "edit_justfile",
+        "/": "search",
     }
     if 0 <= key < 256 and (action := action_by_key.get(chr(key))):
         return _run_help_action(state, action)
@@ -183,10 +206,10 @@ def _run_help_action(state: AppState, action: str) -> bool:
         _activate(state)
         return False
     if action == "select_down":
-        state.selected = min(max(0, len(state.recipes) - 1), state.selected + 1)
+        _move_selection(state, 1)
         return False
     if action == "select_up":
-        state.selected = max(0, state.selected - 1)
+        _move_selection(state, -1)
         return False
     if action == "reload":
         _reload(state)
@@ -196,6 +219,9 @@ def _run_help_action(state: AppState, action: str) -> bool:
         return False
     if action == "edit_justfile":
         _open_current_justfile(state)
+        return False
+    if action == "search":
+        _open_search(state)
         return False
     if action == "back":
         _go_back(state)
@@ -251,6 +277,70 @@ def _close_input(state: AppState) -> None:
     state.input_text = ""
     state.input_error = ""
     state.pending_path = []
+    state.pending_recipe = None
+
+
+def _open_search(state: AppState) -> None:
+    state.show_search = True
+    state.search_error = ""
+    if not state.search_index_loaded:
+        _refresh_search_index(state)
+
+
+def _handle_search_key(state: AppState, key: int) -> None:
+    if key in (27,):
+        _clear_search(state)
+        return
+    if key in (curses.KEY_ENTER, 10, 13):
+        state.show_search = False
+        return
+    if key in (curses.KEY_BACKSPACE, 127, 8):
+        state.search_query = state.search_query[:-1]
+        _refresh_search(state)
+        return
+    if key == curses.KEY_DC:
+        state.search_query = ""
+        _refresh_search(state)
+        return
+    if 32 <= key < 127:
+        state.search_query += chr(key)
+        _refresh_search(state)
+
+
+def _refresh_search(state: AppState) -> None:
+    query = state.search_query.strip()
+    if not query:
+        state.search_results = []
+        state.search_flat_items = []
+        state.search_selected = 0
+        state.search_error = ""
+        return
+
+    if not state.search_index_loaded:
+        _refresh_search_index(state)
+    state.search_results = filter_recipe_results(state.search_index, query)
+    state.search_flat_items = _flatten_search_results(state.search_results)
+    state.search_selected = min(state.search_selected, max(0, len(state.search_flat_items) - 1))
+
+
+def _refresh_search_index(state: AppState) -> None:
+    try:
+        state.search_index = collect_recipes(state.cwd)
+        state.search_index_loaded = True
+        state.search_error = ""
+    except RuntimeError as exc:
+        state.search_index = []
+        state.search_index_loaded = True
+        state.search_error = str(exc)
+
+
+def _clear_search(state: AppState) -> None:
+    state.show_search = False
+    state.search_query = ""
+    state.search_results = []
+    state.search_flat_items = []
+    state.search_selected = 0
+    state.search_error = ""
 
 
 def _reload(state: AppState) -> None:
@@ -258,6 +348,9 @@ def _reload(state: AppState) -> None:
         state.recipes = list_recipes(state.cwd, state.path)
         state.selected = min(state.selected, max(0, len(state.recipes) - 1))
         state.message = ""
+        if _search_active(state):
+            _refresh_search_index(state)
+            _refresh_search(state)
     except RuntimeError as exc:
         state.recipes = []
         state.selected = 0
@@ -274,6 +367,19 @@ def _move_focus(state: AppState, delta: int) -> None:
     except ValueError:
         current_index = 0
     state.focused_pane = PANE_ORDER[(current_index + delta) % len(PANE_ORDER)]
+
+
+def _move_selection(state: AppState, delta: int) -> None:
+    if _search_active(state):
+        new_selected = state.search_selected + delta
+        while 0 <= new_selected < len(state.search_flat_items):
+            _, result = state.search_flat_items[new_selected]
+            if result is not None:
+                state.search_selected = new_selected
+                return
+            new_selected += delta
+        return
+    state.selected = min(max(0, len(state.recipes) - 1), max(0, state.selected + delta))
 
 
 def _open_current_justfile(state: AppState) -> None:
@@ -304,11 +410,11 @@ def _go_back(state: AppState) -> None:
 
 
 def _activate(state: AppState) -> None:
-    if not state.recipes:
+    recipe = _selected_recipe(state)
+    if recipe is None:
         return
 
-    recipe = state.recipes[state.selected]
-    next_path = [*state.path, recipe.name]
+    next_path = _selected_command_path(state)
 
     if recipe.is_namespace:
         _enter_namespace(state, next_path)
@@ -319,6 +425,7 @@ def _activate(state: AppState) -> None:
         state.input_text = ""
         state.input_error = ""
         state.pending_path = next_path
+        state.pending_recipe = recipe
         return
 
     _run_command(state, next_path, [])
@@ -328,11 +435,12 @@ def _open_namespace(state: AppState) -> None:
     recipe = _selected_recipe(state)
     if recipe is None or not recipe.is_namespace:
         return
-    _enter_namespace(state, [*state.path, recipe.name])
+    _enter_namespace(state, _selected_command_path(state))
 
 
 def _enter_namespace(state: AppState, next_path: list[str]) -> None:
     state.selected_by_path[_path_key(state.path)] = state.selected
+    _clear_search(state)
     state.path = next_path
     state.selected = state.selected_by_path.get(_path_key(state.path), 0)
     _reload(state)
@@ -435,6 +543,10 @@ def _draw_location(stdscr: curses.window, state: AppState, rect: Rect) -> None:
 
 
 def _draw_recipes(stdscr: curses.window, state: AppState, rect: Rect) -> None:
+    if _search_active(state) or state.show_search:
+        _draw_search_results(stdscr, state, rect)
+        return
+
     _draw_box(stdscr, rect, f"Commands: {_current_level_name(state)}", _is_focused(state, "commands"))
     content = _inner(rect)
     list_height = max(0, content.height)
@@ -456,6 +568,45 @@ def _draw_recipes(stdscr: curses.window, state: AppState, rect: Rect) -> None:
         _safe_addstr(stdscr, content.y, content.x, " No recipes found"[: content.width])
 
 
+def _draw_search_results(stdscr: curses.window, state: AppState, rect: Rect) -> None:
+    title = f"Search: {state.search_query}" if state.search_query else "Search"
+    _draw_box(stdscr, rect, title, _is_focused(state, "commands"))
+    content = _inner(rect)
+    list_height = max(0, content.height)
+
+    start = _visible_start(state.search_selected, list_height, len(state.search_flat_items))
+
+    for row, item in enumerate(state.search_flat_items[start : start + list_height], start=content.y):
+        item_index = start + row - content.y
+        directory, result = item
+
+        if result is None:
+            _safe_addstr(
+                stdscr,
+                row,
+                content.x,
+                f"@ {directory.name}"[: content.width].ljust(content.width),
+                _color(PAIR_LOCATION) | curses.A_BOLD,
+            )
+        else:
+            label = _search_result_label(result)
+            attr = _recipe_attr(result.recipe, item_index == state.search_selected)
+            _safe_addstr(
+                stdscr,
+                row,
+                content.x,
+                label[: content.width].ljust(content.width),
+                attr,
+            )
+
+    if state.search_error and content.height > 0:
+        _safe_addstr(stdscr, content.y, content.x, state.search_error[: content.width], _color(PAIR_ERROR))
+    elif state.search_query and not state.search_results and content.height > 0:
+        _safe_addstr(stdscr, content.y, content.x, f" No matches for {state.search_query}"[: content.width])
+    elif not state.search_query and content.height > 0:
+        _safe_addstr(stdscr, content.y, content.x, " Type to search commands across justfiles"[: content.width])
+
+
 def _draw_details(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     _draw_box(stdscr, rect, "Command", _is_focused(state, "command"))
     content = _inner(rect)
@@ -465,17 +616,19 @@ def _draw_details(stdscr: curses.window, state: AppState, rect: Rect) -> None:
         _write_wrapped(stdscr, content, ["No command selected."])
         return
 
-    command_path = [*state.path, recipe.name]
+    command_path = _selected_command_path(state)
     command = _format_just_command(command_path)
     recipe_type = "namespace" if recipe.is_namespace else "command"
     row = content.y
     row = _write_detail_line(stdscr, content, row, f"Name: {recipe.name}")
     row = _write_detail_line(stdscr, content, row, f"Type: {recipe_type}")
+    if _search_active(state):
+        row = _write_detail_line(stdscr, content, row, f"Context: {_selected_context_label(state)}")
     row = _write_detail_line(stdscr, content, row, f"Command: {command}")
     row = _write_signature_line(stdscr, content, row, recipe)
     if recipe.description:
         row = _write_detail_line(stdscr, content, row, f"Description: {recipe.description}")
-    level_dir, _ = current_level_dir(state.cwd, state.path)
+    level_dir = _selected_directory(state)
     row = _write_detail_line(stdscr, content, row, f"Directory: {level_dir}")
     _write_context_lines(stdscr, content, row, level_dir)
 
@@ -577,15 +730,12 @@ def _draw_log(stdscr: curses.window, state: AppState, rect: Rect) -> None:
 
 
 def _draw_env(stdscr: curses.window, state: AppState, rect: Rect) -> None:
-    level_dir, resolved = current_level_dir(state.cwd, state.path)
+    level_dir = _selected_directory(state)
     env_path = level_dir / ".env"
     title = ".env  [tab: log]"
     _draw_box(stdscr, rect, title, _is_focused(state, "lower"))
     content = _inner(rect)
 
-    if not resolved:
-        _write_wrapped(stdscr, content, [f"Could not resolve current directory for: {' '.join(state.path)}"])
-        return
     if not env_path.is_file():
         _write_wrapped(stdscr, content, [f"No .env found at {env_path}"])
         return
@@ -606,9 +756,10 @@ def _draw_env(stdscr: curses.window, state: AppState, rect: Rect) -> None:
 def _draw_footer(stdscr: curses.window, state: AppState, rect: Rect) -> None:
     segments = [
         ("j/k", "move"),
+        ("/", "search"),
         ("enter", "open/run"),
         ("l", "open dir"),
-        ("h/esc", "back"),
+        ("h/esc", "clear" if _search_active(state) or state.show_search else "back"),
         ("[/]", "pane"),
         ("tab", ".env"),
         ("e", "edit"),
@@ -712,6 +863,7 @@ def _help_options(state: AppState) -> list[HelpOption]:
     options: list[HelpOption] = [
         HelpOption("j / down", "select next command", "select_down"),
         HelpOption("k / up", "select previous command", "select_up"),
+        HelpOption("/", "search commands across nested justfiles", "search"),
         HelpOption("[ / ]", "move focus between panes", "close"),
         HelpOption("tab", "toggle the lower pane between log and .env", "toggle_env"),
         HelpOption("e", f"open the current justfile in {DEFAULT_EDITOR}", "edit_justfile"),
@@ -727,7 +879,7 @@ def _help_options(state: AppState) -> list[HelpOption]:
     if recipe.is_namespace:
         options.insert(0, HelpOption("enter/l", f"open {recipe.name} and list its commands", "activate"))
     else:
-        options.insert(0, HelpOption("enter", f"run {_format_just_command([*state.path, recipe.name])}", "activate"))
+        options.insert(0, HelpOption("enter", f"run {_format_just_command(_selected_command_path(state))}", "activate"))
 
     if recipe.description:
         options.append(HelpOption("selected", recipe.description, "close"))
@@ -889,12 +1041,19 @@ def _inner(rect: Rect) -> Rect:
 
 
 def _selected_recipe(state: AppState) -> Recipe | None:
+    if _search_active(state):
+        if not state.search_flat_items:
+            return None
+        _, result = state.search_flat_items[state.search_selected]
+        return result.recipe if result else None
     if not state.recipes:
         return None
     return state.recipes[state.selected]
 
 
 def _recipe_for_path(state: AppState, path: list[str]) -> Recipe | None:
+    if state.pending_recipe is not None and tuple(path) == tuple(state.pending_path):
+        return state.pending_recipe
     if not path or path[:-1] != state.path:
         return None
     name = path[-1]
@@ -905,6 +1064,12 @@ def _recipe_label(recipe: Recipe) -> str:
     if recipe.is_namespace:
         return f" > {recipe.name}/"
     return f"   {recipe.name}"
+
+
+def _search_result_label(result: RecipeSearchResult) -> str:
+    prefix = "   > " if result.recipe.is_namespace else "     "
+    suffix = "/" if result.recipe.is_namespace else ""
+    return f"{prefix}{result.recipe.name}{suffix}"
 
 
 def _recipe_attr(recipe: Recipe, selected: bool) -> int:
@@ -925,6 +1090,10 @@ def _is_focused(state: AppState, pane: str) -> bool:
     return state.focused_pane == pane
 
 
+def _search_active(state: AppState) -> bool:
+    return bool(state.search_query)
+
+
 def _current_justfile(state: AppState) -> Path | None:
     level_dir, resolved = current_level_dir(state.cwd, state.path)
     if not resolved:
@@ -933,10 +1102,64 @@ def _current_justfile(state: AppState) -> Path | None:
 
 
 def _selected_command(state: AppState) -> str:
+    if state.show_search and not state.search_query:
+        return "type to search commands"
     recipe = _selected_recipe(state)
     if recipe is None:
+        if state.show_search:
+            return "type to search commands"
         return "no command selected"
-    return _format_just_command([*state.path, recipe.name])
+    return _format_just_command(_selected_command_path(state))
+
+
+def _selected_command_path(state: AppState) -> list[str]:
+    if _search_active(state) and state.search_flat_items:
+        _, result = state.search_flat_items[state.search_selected]
+        return list(result.path) if result else [*state.path]
+    recipe = _selected_recipe(state)
+    if recipe is None:
+        return [*state.path]
+    return [*state.path, recipe.name]
+
+
+def _selected_directory(state: AppState) -> Path:
+    if _search_active(state) and state.search_flat_items:
+        directory, result = state.search_flat_items[state.search_selected]
+        return result.directory if result else directory
+    level_dir, _ = current_level_dir(state.cwd, state.path)
+    return level_dir
+
+
+def _selected_context_label(state: AppState) -> str:
+    if _search_active(state) and state.search_flat_items:
+        _, result = state.search_flat_items[state.search_selected]
+        return _format_context(result.context) if result else _format_context(tuple(state.path))
+    return _format_context(tuple(state.path))
+
+
+def _format_context(context: tuple[str, ...]) -> str:
+    if not context:
+        return "root"
+    return "root / " + " / ".join(context)
+
+
+def _group_search_results_by_directory(
+    results: list[RecipeSearchResult],
+) -> list[tuple[Path, list[RecipeSearchResult]]]:
+    grouped: dict[Path, list[RecipeSearchResult]] = {}
+    for result in results:
+        grouped.setdefault(result.directory, []).append(result)
+    return sorted(grouped.items(), key=lambda pair: str(pair[0]))
+
+
+def _flatten_search_results(
+    results: list[RecipeSearchResult],
+) -> list[tuple[Path, RecipeSearchResult | None]]:
+    flat_items: list[tuple[Path, RecipeSearchResult | None]] = []
+    for directory, group_results in _group_search_results_by_directory(results):
+        flat_items.append((directory, None))
+        flat_items.extend((directory, result) for result in group_results)
+    return flat_items
 
 
 def _format_just_command(path: list[str], args: list[str] | None = None) -> str:

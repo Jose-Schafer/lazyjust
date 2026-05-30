@@ -12,9 +12,11 @@ from lib.app import (
     _open_namespace,
     _parse_env_assignment,
     _recipe_for_path,
+    _search_result_label,
+    _selected_command_path,
     _toggle_lower_view,
 )
-from lib.justfile import Recipe, RecipeArgument
+from lib.justfile import Recipe, RecipeArgument, RecipeSearchResult
 
 
 def test_help_options_show_open_hint_for_namespace() -> None:
@@ -120,6 +122,44 @@ def test_recipe_for_path_returns_current_pending_recipe() -> None:
     state = AppState(cwd=Path("/repo"), path=["projects"], recipes=[recipe])
 
     assert _recipe_for_path(state, ["projects", "set-client"]) == recipe
+
+
+def test_recipe_for_path_returns_pending_search_recipe() -> None:
+    recipe = Recipe(
+        name="set-client",
+        signature="set-client client",
+        description="",
+        is_variadic=False,
+        is_namespace=False,
+        arguments=(RecipeArgument("client", "client", None, True, False),),
+    )
+    state = AppState(
+        cwd=Path("/repo"),
+        path=["projects"],
+        pending_path=["agent", "set-client"],
+        pending_recipe=recipe,
+    )
+
+    assert _recipe_for_path(state, ["agent", "set-client"]) == recipe
+
+
+def test_search_result_selection_uses_full_command_path() -> None:
+    recipe = Recipe("aws_login", "aws_login", "", False, False)
+    state = AppState(
+        cwd=Path("/repo"),
+        search_query="aws",
+        search_results=[
+            RecipeSearchResult(
+                path=("projects", "admin", "aws_login"),
+                context=("projects", "admin"),
+                directory=Path("/repo/projects/admin"),
+                recipe=recipe,
+            )
+        ],
+    )
+
+    assert _selected_command_path(state) == ["projects", "admin", "aws_login"]
+    assert _search_result_label(state.search_results[0]) == "   aws_login  @ root / projects / admin"
 
 
 def test_go_back_pops_current_path_level(tmp_path) -> None:

@@ -5,6 +5,7 @@ from lib.justfile import (
     list_recipes,
     parse_just_list,
     parse_working_directories,
+    search_recipes,
 )
 
 
@@ -95,6 +96,45 @@ projects *args:
     assert recipes["uv"].is_namespace is False
     assert recipes["projects"].is_variadic is True
     assert recipes["projects"].is_namespace is True
+
+
+def test_search_recipes_finds_matches_across_nested_justfiles(tmp_path) -> None:
+    (tmp_path / "projects" / "admin").mkdir(parents=True)
+    (tmp_path / "justfile").write_text(
+        """
+[working-directory('projects')]
+@projects *args:
+    just "$@"
+
+aws_login:
+    echo login
+""".strip()
+    )
+    (tmp_path / "projects" / "justfile").write_text(
+        """
+[working-directory('admin')]
+@admin *args:
+    just "$@"
+""".strip()
+    )
+    (tmp_path / "projects" / "admin" / "justfile").write_text(
+        """
+aws_credentials:
+    echo credentials
+
+deploy:
+    echo deploy
+""".strip()
+    )
+
+    matches = search_recipes(tmp_path, "aws")
+
+    assert [match.path for match in matches] == [
+        ("aws_login",),
+        ("projects", "admin", "aws_credentials"),
+    ]
+    assert matches[0].context == ()
+    assert matches[1].context == ("projects", "admin")
 
 
 def test_parse_working_directories_supports_common_just_attribute_forms(tmp_path) -> None:

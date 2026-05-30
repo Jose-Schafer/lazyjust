@@ -26,6 +26,14 @@ class Recipe:
     working_dir: Path | None = None
 
 
+@dataclass(frozen=True)
+class RecipeSearchResult:
+    path: tuple[str, ...]
+    context: tuple[str, ...]
+    directory: Path
+    recipe: Recipe
+
+
 def list_recipes(cwd: Path, path: list[str] | None = None) -> list[Recipe]:
     just_path = path or []
     level_dir, resolved = current_level_dir(cwd, just_path)
@@ -43,6 +51,58 @@ def list_recipes(cwd: Path, path: list[str] | None = None) -> list[Recipe]:
     recipes = parse_just_list(result.stdout)
     delegations = parse_working_directories(level_dir)
     return [_with_namespace_status(cwd, just_path, level_dir, delegations, recipe) for recipe in recipes]
+
+
+def collect_recipes(cwd: Path) -> list[RecipeSearchResult]:
+    results: list[RecipeSearchResult] = []
+    visited_dirs: set[Path] = set()
+
+    def walk(path: tuple[str, ...]) -> None:
+        level_dir, resolved = current_level_dir(cwd, list(path))
+        if not resolved:
+            return
+        if level_dir in visited_dirs:
+            return
+        visited_dirs.add(level_dir)
+
+        try:
+            recipes = list_recipes(cwd, list(path))
+        except RuntimeError:
+            return
+
+        for recipe in recipes:
+            recipe_path = (*path, recipe.name)
+            results.append(
+                RecipeSearchResult(
+                    path=recipe_path,
+                    context=path,
+                    directory=level_dir,
+                    recipe=recipe,
+                )
+            )
+            if recipe.is_namespace:
+                walk(recipe_path)
+
+    walk(())
+    return results
+
+
+def search_recipes(cwd: Path, query: str) -> list[RecipeSearchResult]:
+    return filter_recipe_results(collect_recipes(cwd), query)
+
+
+def filter_recipe_results(
+    results: list[RecipeSearchResult],
+    query: str,
+) -> list[RecipeSearchResult]:
+    normalized_query = query.strip().casefold()
+    if not normalized_query:
+        return []
+    return [
+        result
+        for result in results
+        if _recipe_matches(result.recipe, result.path, normalized_query)
+    ]
 
 
 def run_recipe(cwd: Path, path: list[str], args: list[str] | None = None) -> int:
@@ -88,6 +148,17 @@ def parse_just_list(output: str) -> list[Recipe]:
         )
 
     return recipes
+
+
+def _recipe_matches(recipe: Recipe, path: tuple[str, ...], query: str) -> bool:
+    haystack = " ".join(
+        (
+            recipe.name,
+            recipe.signature,
+            " ".join(path),
+        )
+    )
+    return query in haystack.casefold()
 
 
 def _split_description(line: str) -> tuple[str, str]:

@@ -42,6 +42,7 @@ uv tool install --reinstall /Users/joseschafer/Documents/lazypro
 Controls:
 
 - `j` / `k` or arrow keys: navigate
+- `/`: search commands across nested justfiles
 - `enter`: open a variadic delegation recipe or run a recipe
 - `l`: open a variadic delegation recipe only; never runs commands
 - `[` / `]`: move focus between panes
@@ -54,3 +55,8 @@ Controls:
 
 Recipes with variadic arguments, such as `@projects *args`, are treated as folders.
 Opening one runs `just projects --list`, so delegated service justfiles can be browsed.
+
+# Next features
+1. quiero arreglar el tema de "backslash"
+2. cambiar el nombre
+3. quiero poder agregar opciones a los comandos de justfile. Opciones de valores para las variables que pueda pickear.
