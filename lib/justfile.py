@@ -322,3 +322,8 @@ def find_justfile(directory: Path) -> Path | None:
 
 def _has_justfile(directory: Path) -> bool:
     return find_justfile(directory) is not None
+
+
+def has_justfile_in_dir(directory: Path) -> bool:
+    """Public helper to check if directory has justfile."""
+    return _has_justfile(directory)

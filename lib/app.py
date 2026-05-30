@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import curses
+import json
 import subprocess
 from shlex import join, split
 import textwrap
@@ -15,6 +16,7 @@ from lib.justfile import (
     filter_recipe_results,
     find_justfile,
     has_dotenv_load,
+    has_justfile_in_dir,
     list_recipes,
     run_recipe,
 )
@@ -85,6 +87,11 @@ class AppState:
     search_flat_items: list[tuple[Path, RecipeSearchResult | None]] = field(default_factory=list)
     search_selected: int = 0
     search_error: str = ""
+    options: dict[str, list[str]] = field(default_factory=dict)
+    show_create_config: bool = False
+    show_option_selector: bool = False
+    option_presets: list[str] = field(default_factory=list)
+    option_selected: int = 0
 
 
 @dataclass(frozen=True)
@@ -107,7 +114,12 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
     _init_colors()
 
     state = AppState(cwd=cwd)
+    _load_options(state)
     _reload(state)
+
+    config_path = cwd / ".lazyjust.json"
+    if not config_path.exists() and has_justfile_in_dir(cwd):
+        state.show_create_config = True
 
     while True:
         _draw(stdscr, state)
@@ -119,6 +131,14 @@ def _run_curses(stdscr: curses.window, cwd: Path) -> int:
 
         key = stdscr.getch()
         if key == -1:
+            continue
+
+        if state.show_create_config:
+            _handle_create_config_key(state, key)
+            continue
+
+        if state.show_option_selector:
+            _handle_option_selector_key(state, key)
             continue
 
         if state.show_input:
@@ -317,6 +337,81 @@ def _close_input(state: AppState) -> None:
     state.pending_recipe = None
 
 
+def _load_options(state: AppState) -> None:
+    config_path = state.cwd / ".lazyjust.json"
+    if not config_path.exists():
+        return
+    try:
+        data = json.loads(config_path.read_text())
+        state.options = data.get("options", {})
+    except (OSError, json.JSONDecodeError):
+        return
+
+
+def _handle_create_config_key(state: AppState, key: int) -> None:
+    if key in (ord("y"), ord("Y")):
+        _create_config_file(state)
+        state.show_create_config = False
+        return
+    if key in (ord("n"), ord("N"), 27, curses.KEY_ENTER, 10, 13):
+        state.show_create_config = False
+        return
+
+
+def _create_config_file(state: AppState) -> None:
+    config_path = state.cwd / ".lazyjust.json"
+    template = {
+        "_comment": [
+            "lazyjust configuration file",
+            "",
+            "Define command argument presets for quick selection in 'options'.",
+            "Copy entries from '_examples' below and customize for your project.",
+            "",
+            "Command paths use '/' separator (e.g., 'projects/admin/deploy').",
+            "- Single-arg/variadic recipes: input passed as-is (preserves quotes)",
+            "- Multi-arg recipes: input split by shell quoting rules"
+        ],
+        "_examples": {
+            "projects/agent_stack/aws": [
+                "dynamodb query --table-name MyTable --key-condition-expression \"PK = :pk\" --region us-east-1",
+                "s3 ls s3://my-bucket"
+            ],
+            "projects/agent_stack/set-client": [
+                "feria_chilena_del_libro dev",
+                "template dev"
+            ]
+        },
+        "options": {}
+    }
+    try:
+        config_path.write_text(json.dumps(template, indent=2))
+        state.message = f"created {config_path}"
+    except OSError as exc:
+        state.message = f"failed to create config: {exc}"
+
+
+def _handle_option_selector_key(state: AppState, key: int) -> None:
+    if key in (27,):
+        state.show_option_selector = False
+        return
+    if key in (curses.KEY_UP, ord("k")):
+        state.option_selected = max(0, state.option_selected - 1)
+        return
+    if key in (curses.KEY_DOWN, ord("j")):
+        state.option_selected = min(len(state.option_presets) - 1, state.option_selected + 1)
+        return
+    if key in (curses.KEY_ENTER, 10, 13):
+        if state.option_presets:
+            state.input_text = state.option_presets[state.option_selected]
+        state.show_option_selector = False
+        state.show_input = True
+        return
+    if key in (ord("i"), ord("I")):
+        state.show_option_selector = False
+        state.show_input = True
+        return
+
+
 def _remove_backslashes(text: str) -> str:
     """Remove backslash line continuations and join into single line."""
     lines = text.splitlines()
@@ -470,12 +565,23 @@ def _activate(state: AppState) -> None:
         return
 
     if recipe.arguments:
-        state.show_input = True
-        state.input_text = ""
-        state.input_error = ""
         state.pending_path = next_path
         state.pending_recipe = recipe
-        state.message = "Tip: Paste multi-line? Will prompt to remove backslashes"
+
+        command_key = "/".join(next_path)
+        presets = state.options.get(command_key, [])
+
+        if presets:
+            state.option_presets = presets
+            state.option_selected = 0
+            state.show_option_selector = True
+            state.input_text = ""
+            state.input_error = ""
+        else:
+            state.show_input = True
+            state.input_text = ""
+            state.input_error = ""
+            state.message = "Tip: Paste multi-line? Backslashes auto-removed"
         return
 
     _run_command(state, next_path, [])
@@ -558,6 +664,10 @@ def _draw(stdscr: curses.window, state: AppState) -> None:
     _draw_details(stdscr, state, details)
     _draw_lower_pane(stdscr, state, output)
     _draw_footer(stdscr, state, footer)
+    if state.show_create_config:
+        _draw_create_config_modal(stdscr, state, height, width)
+    if state.show_option_selector:
+        _draw_option_selector_modal(stdscr, state, height, width)
     if state.show_input:
         _draw_input_modal(stdscr, state, height, width)
     if state.show_help:
@@ -895,6 +1005,68 @@ def _draw_input_modal(stdscr: curses.window, state: AppState, height: int, width
             help_text[: content.width],
             _color(PAIR_DIM),
         )
+
+
+def _draw_create_config_modal(stdscr: curses.window, state: AppState, height: int, width: int) -> None:
+    modal_width = min(70, max(50, width - 10))
+    modal_height = 8
+    rect = Rect(
+        y=max(1, (height - modal_height) // 2),
+        x=max(0, (width - modal_width) // 2),
+        height=modal_height,
+        width=modal_width,
+    )
+
+    _draw_filled_box(stdscr, rect, "Create Config")
+    content = _inner(rect)
+    row = content.y
+    row = _write_detail_line(stdscr, content, row, "No .lazyjust.json found in project root.")
+    row = _write_detail_line(stdscr, content, row, "")
+    row = _write_detail_line(stdscr, content, row, "Create config file for command argument presets?")
+    row = _write_detail_line(stdscr, content, row, "")
+    _safe_addstr(stdscr, row, content.x, "y", _color(PAIR_KEY) | curses.A_BOLD)
+    _safe_addstr(stdscr, row, content.x + 1, " yes   ")
+    _safe_addstr(stdscr, row, content.x + 8, "N", _color(PAIR_KEY) | curses.A_BOLD)
+    _safe_addstr(stdscr, row, content.x + 9, " no (default)   ")
+    _safe_addstr(stdscr, row, content.x + 26, "esc", _color(PAIR_KEY) | curses.A_BOLD)
+    _safe_addstr(stdscr, row, content.x + 29, " skip")
+
+
+def _draw_option_selector_modal(stdscr: curses.window, state: AppState, height: int, width: int) -> None:
+    modal_width = min(80, max(60, width - 10))
+    modal_height = min(20, max(10, height - 6))
+    rect = Rect(
+        y=max(1, (height - modal_height) // 2),
+        x=max(0, (width - modal_width) // 2),
+        height=modal_height,
+        width=modal_width,
+    )
+
+    command_path = "/".join(state.pending_path)
+    _draw_filled_box(stdscr, rect, f"Select Preset: {command_path}")
+    content = _inner(rect)
+
+    list_height = max(0, content.height - 3)
+    start = _visible_start(state.option_selected, list_height, len(state.option_presets))
+
+    row = content.y
+    for index, preset in enumerate(state.option_presets[start:start + list_height], start=start):
+        if row >= content.y + content.height - 3:
+            break
+        is_selected = index == state.option_selected
+        attr = _color(PAIR_SELECTED) if is_selected else curses.A_NORMAL
+        label = f"  {preset}"
+        _safe_addstr(stdscr, row, content.x, label[: content.width].ljust(content.width), attr)
+        row += 1
+
+    row = content.y + content.height - 2
+    if row >= content.y:
+        _safe_addstr(stdscr, row, content.x, "enter", _color(PAIR_KEY) | curses.A_BOLD)
+        _safe_addstr(stdscr, row, content.x + 5, " select   ")
+        _safe_addstr(stdscr, row, content.x + 15, "i", _color(PAIR_KEY) | curses.A_BOLD)
+        _safe_addstr(stdscr, row, content.x + 16, " type custom   ")
+        _safe_addstr(stdscr, row, content.x + 31, "esc", _color(PAIR_KEY) | curses.A_BOLD)
+        _safe_addstr(stdscr, row, content.x + 34, " cancel")
 
 
 def _draw_help_modal(stdscr: curses.window, state: AppState, height: int, width: int) -> None:

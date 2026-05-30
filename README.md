@@ -1,4 +1,4 @@
-# lazypro
+# lazyjust
 
 Lazy-style terminal UI for navigating monorepo `justfile` commands.
 
@@ -24,13 +24,13 @@ uv tool install /Users/joseschafer/Documents/lazypro
 Then run it from any project root:
 
 ```bash
-lazypro
+lazyjust
 ```
 
 For one-off execution without installing:
 
 ```bash
-uvx --from /Users/joseschafer/Documents/lazypro lazypro
+uvx --from /Users/joseschafer/Documents/lazypro lazyjust
 ```
 
 After local changes, reinstall the global tool:
@@ -55,8 +55,3 @@ Controls:
 
 Recipes with variadic arguments, such as `@projects *args`, are treated as folders.
 Opening one runs `just projects --list`, so delegated service justfiles can be browsed.
-
-# Next features
-1. quiero arreglar el tema de "backslash"
-2. cambiar el nombre
-3. quiero poder agregar opciones a los comandos de justfile. Opciones de valores para las variables que pueda pickear.
