@@ -172,6 +172,26 @@ def parse_working_directories(justfile_dir: Path) -> dict[str, Path]:
     return delegations
 
 
+def has_dotenv_load(justfile_dir: Path) -> bool:
+    justfile_path = _find_justfile(justfile_dir)
+    if justfile_path is None:
+        return False
+
+    try:
+        justfile_text = justfile_path.read_text()
+    except OSError:
+        return False
+
+    for raw_line in justfile_text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("#"):
+            continue
+        if line == "set dotenv-load := true":
+            return True
+
+    return False
+
+
 def _with_namespace_status(
     _cwd: Path,
     _current_path: list[str],

@@ -6,6 +6,7 @@ from lib.app import (
     _go_back,
     _help_options,
     _important_env_values,
+    _context_warnings,
     _parse_env_assignment,
     _recipe_for_path,
     _toggle_lower_view,
@@ -141,3 +142,9 @@ AWS_REGION=us-east-1
         ("AWS_PROFILE", "dev-retail-agent-admin"),
         ("AWS_REGION", "us-east-1"),
     ]
+
+
+def test_context_warnings_reports_missing_dotenv_load(tmp_path) -> None:
+    (tmp_path / "justfile").write_text("run:\n    echo run\n")
+
+    assert _context_warnings(tmp_path) == ["! justfile missing: set dotenv-load := true"]

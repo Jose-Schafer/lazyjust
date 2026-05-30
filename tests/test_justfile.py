@@ -1,4 +1,10 @@
-from lib.justfile import current_level_dir, list_recipes, parse_just_list, parse_working_directories
+from lib.justfile import (
+    current_level_dir,
+    has_dotenv_load,
+    list_recipes,
+    parse_just_list,
+    parse_working_directories,
+)
 
 
 def test_parse_just_list_marks_variadic_recipes_as_namespaces() -> None:
@@ -134,3 +140,22 @@ def test_current_level_dir_resolves_nested_working_directory_delegations(tmp_pat
 
     assert resolved is True
     assert level_dir == (tmp_path / "projects" / "project_1").resolve()
+
+
+def test_has_dotenv_load_detects_required_setting(tmp_path) -> None:
+    (tmp_path / "justfile").write_text(
+        """
+# set dotenv-load := false
+set dotenv-load := true
+run:
+    echo run
+""".strip()
+    )
+
+    assert has_dotenv_load(tmp_path) is True
+
+
+def test_has_dotenv_load_returns_false_when_missing(tmp_path) -> None:
+    (tmp_path / "justfile").write_text("run:\n    echo run\n")
+
+    assert has_dotenv_load(tmp_path) is False

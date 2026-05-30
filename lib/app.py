@@ -6,7 +6,7 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from lib.justfile import Recipe, current_level_dir, list_recipes, run_recipe
+from lib.justfile import Recipe, current_level_dir, has_dotenv_load, list_recipes, run_recipe
 
 
 PAIR_NAMESPACE = 1
@@ -445,16 +445,30 @@ def _write_signature_line(stdscr: curses.window, rect: Rect, row: int, recipe: R
 
 def _write_context_lines(stdscr: curses.window, rect: Rect, row: int, directory: Path) -> int:
     important_values = _important_env_values(directory)
-    if not important_values or row >= rect.y + rect.height:
+    warnings = _context_warnings(directory)
+    if not important_values and not warnings:
+        return row
+    if row >= rect.y + rect.height:
         return row
 
     row = _write_detail_line(stdscr, rect, row + 1, "Context:")
+    for warning in warnings:
+        if row >= rect.y + rect.height:
+            break
+        _safe_addstr(stdscr, row, rect.x, warning[: rect.width].ljust(rect.width), _color(PAIR_ERROR))
+        row += 1
     for name, value in important_values:
         if row >= rect.y + rect.height:
             break
         _write_key_value_line(stdscr, rect, row, name, value)
         row += 1
     return row
+
+
+def _context_warnings(directory: Path) -> list[str]:
+    if has_dotenv_load(directory):
+        return []
+    return ["! justfile missing: set dotenv-load := true"]
 
 
 def _write_key_value_line(
